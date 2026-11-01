@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrailBlazing – public paths from IGN data</title>
+<style>/*LEAFLET_CSS*/</style>
+<style>
+  :root { --path:#1a9e3f; --small:#c98a00; --road:#8a8f98; --restricted:#d33; --cycle:#2b6fd6; --route:#7b2fd0; }
+  html, body { margin:0; height:100%; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:#1d2330; }
+  #map { position:absolute; inset:0; }
+  .panel { position:absolute; z-index:1000; background:#fff; border-radius:10px; box-shadow:0 2px 12px rgba(0,0,0,.18); }
+  #top { top:10px; left:54px; right:58px; max-width:520px; padding:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  #top input[type=search] { flex:1 1 160px; min-width:0; padding:7px 9px; border:1px solid #cdd2da; border-radius:7px; font:inherit; }
+  button, select { font:inherit; padding:7px 10px; border:1px solid #cdd2da; border-radius:7px; background:#f6f7f9; cursor:pointer; color:inherit; }
+  button.on { background:var(--route); color:#fff; border-color:var(--route); }
+  button:disabled { opacity:.5; cursor:default; }
+  #results { position:absolute; top:100%; left:8px; right:8px; margin-top:4px; background:#fff; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,.2); display:none; }
+  #results div { padding:8px 10px; cursor:pointer; border-bottom:1px solid #eee; }
+  #results div:hover { background:#f2f4f7; }
+  #legend { bottom:24px; left:10px; padding:10px 12px; width:250px; max-height:calc(100% - 140px); overflow:auto; }
+  #legend h3, #plan h3 { margin:0 0 6px; font-size:14px; }
+  #legend label { display:flex; align-items:center; gap:7px; margin:3px 0; cursor:pointer; }
+  .sw { display:inline-block; width:26px; height:0; border-top:4px solid; flex:none; }
+  .count { margin-left:auto; color:#6b7280; font-size:12px; }
+  .muted { color:#6b7280; font-size:12px; }
+  #status { margin-top:6px; }
+  #plan { bottom:24px; right:10px; padding:10px 12px; width:270px; display:none; }
+  #plan .row { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
+  #stats { margin-top:6px; }
+  .bar { height:8px; border-radius:4px; overflow:hidden; display:flex; background:#eee; margin-top:4px; }
+  .bar span { display:block; height:100%; }
+  .wp { background:var(--route); color:#fff; border:2px solid #fff; border-radius:50%; width:22px; height:22px; line-height:22px; text-align:center; font-weight:700; font-size:12px; box-shadow:0 1px 4px rgba(0,0,0,.4); }
+  .leaflet-popup-content { margin:10px 12px; font-size:13px; max-width:280px; }
+  .leaflet-popup-content table { border-collapse:collapse; margin-top:6px; font-size:11px; }
+  .leaflet-popup-content td { padding:1px 4px; border-bottom:1px solid #f0f0f0; vertical-align:top; word-break:break-word; }
+  .verdict { font-weight:600; }
+  #help { top:70px; left:54px; right:58px; max-width:520px; padding:12px 14px; display:none; max-height:70%; overflow:auto; }
+  #help p { margin:6px 0; }
+  @media (max-width:600px) {
+    #legend { width:auto; right:10px; bottom:auto; top:118px; max-height:40%; display:none; }
+    #legend.open { display:block; }
+    #plan { left:10px; width:auto; }
+    #help { top:118px; }
+  }
+  @media (min-width:601px) { #legendBtn { display:none; } }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="top" class="panel">
+  <input id="q" type="search" placeholder="Search a place or address…" autocomplete="off">
+  <button id="locBtn" title="Show my position">◎ Me</button>
+  <button id="planBtn" title="Click on the map to add route points">✎ Plan</button>
+  <button id="legendBtn">Layers</button>
+  <button id="helpBtn" title="How it works">?</button>
+  <div id="results"></div>
+</div>
+
+<div id="help" class="panel">
+  <h3>How TrailBlazing reads IGN data</h3>
+  <p>Paths come live from IGN's <b>BD TOPO</b> (road section layer, <i>troncon_de_route</i>) through the Géoplateforme. Zoom in to level 14 or more to load them.</p>
+  <p><b style="color:var(--path)">Green</b>: section whose IGN nature is <i>Chemin</i>, <i>Sentier</i>, <i>Route empierrée</i> or <i>Escalier</i>, with no "private" flag and no "reserved to authorised users" access. These are the best candidates for <i>chemins ruraux</i> (old <i>chemins vicinaux</i>), which are open to public use (Code rural, art. L161-1 and following).</p>
+  <p><b style="color:var(--restricted)">Red dotted</b>: IGN marks the section as private or reserved to authorised users (<i>Restreint aux ayants droit</i>).</p>
+  <p><b>Limits.</b> IGN does not record legal ownership, so a green track can still be a private <i>chemin d'exploitation</i>, and a mayor can restrict motor vehicles by local order. Turn on the <b>Cadastre</b> overlay: a path running <i>between</i> parcels is usually public, one crossing <i>inside</i> a numbered parcel is usually private. Always respect signs on the ground.</p>
+  <p>Click any line to see its full IGN attributes.</p>
+  <button id="helpClose">Close</button>
+</div>
+
+<div id="legend" class="panel">
+  <h3>Show</h3>
+  <label><input type="checkbox" data-cls="path" checked><span class="sw" style="border-color:var(--path)"></span>Public paths &amp; tracks<span class="count" id="c-path"></span></label>
+  <label><input type="checkbox" data-cls="cycle" checked><span class="sw" style="border-color:var(--cycle)"></span>Cycle paths<span class="count" id="c-cycle"></span></label>
+  <label><input type="checkbox" data-cls="small" checked><span class="sw" style="border-color:var(--small)"></span>Small local roads<span class="count" id="c-small"></span></label>
+  <label><input type="checkbox" data-cls="road"><span class="sw" style="border-color:var(--road)"></span>Main roads<span class="count" id="c-road"></span></label>
+  <label><input type="checkbox" data-cls="restricted" checked><span class="sw" style="border-color:var(--restricted);border-top-style:dotted"></span>Private / restricted<span class="count" id="c-restricted"></span></label>
+  <div style="margin-top:8px"><label><input type="checkbox" id="cadastre"> Cadastre parcels overlay</label></div>
+  <div id="status" class="muted">Zoom in to load paths.</div>
+</div>
+
+<div id="plan" class="panel">
+  <h3>Plan a trip</h3>
+  <div class="muted">Tap the map to add points. Drag a point to move it, tap it to remove it.</div>
+  <div class="row">
+    <select id="profile" title="Travel mode">
+      <option value="walk">On foot</option>
+      <option value="bike">Bike / MTB</option>
+      <option value="vehicle">4x4 / motorbike</option>
+    </select>
+    <select id="pref" title="Path preference">
+      <option value="prefer">Prefer paths</option>
+      <option value="strict">Paths as much as possible</option>
+    </select>
+  </div>
+  <div id="stats" class="muted"></div>
+  <div class="row">
+    <button id="loopBtn" title="Close the loop back to the start">⟲ Loop</button>
+    <button id="undoBtn">Undo</button>
+    <button id="clearBtn">Clear</button>
+    <button id="gpxBtn" disabled>GPX</button>
+  </div>
+</div>
+
+<script>/*LEAFLET_JS*/</script>
+<script>
+"use strict";
+// ---------- Config ----------
+const GEOPF = 'https://data.geopf.fr';
+const MIN_DATA_ZOOM = 14;
+const CELL = 0.015;            // data grid cell size in degrees
+const PAGE = 5000;             // WFS page size
+const MAX_PARALLEL = 4;
+
+// ---------- Map ----------
+const wmts = (layer, fmt) => `${GEOPF}/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer}&STYLE=normal&TILEMATRIXSET=PM&FORMAT=${fmt}&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}`;
+const ignAttr = '© <a href="https://www.ign.fr/">IGN</a> Géoplateforme';
+const planIGN = L.tileLayer(wmts('GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2', 'image/png'), { maxZoom: 20, maxNativeZoom: 19, attribution: ignAttr });
+const ortho = L.tileLayer(wmts('ORTHOIMAGERY.ORTHOPHOTOS', 'image/jpeg'), { maxZoom: 20, maxNativeZoom: 19, attribution: ignAttr });
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap contributors' });
+const cadastre = L.tileLayer(`${GEOPF}/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=CADASTRALPARCELS.PARCELLAIRE_EXPRESS&STYLE=PCI%20vecteur&TILEMATRIXSET=PM&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}`, { maxZoom: 20, maxNativeZoom: 19, attribution: ignAttr, opacity: .8 });
+
+const saved = loadJSON('tb.view');
+const map = L.map('map', { preferCanvas: true, zoomControl: true, layers: [planIGN] })
+  .setView(saved ? [saved.lat, saved.lng] : [46.6, 2.4], saved ? saved.z : 6);
+L.control.layers({ 'Plan IGN': planIGN, 'Aerial photos (IGN)': ortho, 'OpenStreetMap': osm }, null, { position: 'topright' }).addTo(map);
+L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
+const renderer = L.canvas({ tolerance: 7 });
+
+// ---------- Helpers ----------
+function loadJSON(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+const norm = s => (s == null ? '' : String(s)).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function hav(a, b) { // [lat,lng] -> meters
+  const R = 6371008.8, r = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * r, dLng = (b[1] - a[1]) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const fmtKm = m => m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 2 : 1)} km`;
+
+// ---------- Classification of BD TOPO road sections ----------
+const PATH_NATURES = ['chemin', 'sentier', 'route empierree', 'escalier'];
+function props(f) { // lower-case keys
+  const o = {}; for (const k in (f.properties || {})) o[k.toLowerCase()] = f.properties[k]; return o;
+}
+const isTrue = v => v === true || ['true', 'oui', '1', 't'].includes(norm(v));
+const isRestricted = v => norm(v).startsWith('restreint');
+function classify(p) {
+  const nature = norm(p.nature);
+  if (norm(p.etat_de_l_objet) && !norm(p.etat_de_l_objet).startsWith('en service')) return null; // planned / under construction
+  if (nature.includes('bac') || nature.includes('liaison')) return null;
+  if (nature.includes('autoroutier') || nature.includes('bretelle')) return 'motorway';
+  const restricted = isTrue(p.prive) || isRestricted(p.acces_vehicule_leger) || isRestricted(p.acces_pieton);
+  if (PATH_NATURES.includes(nature)) return restricted ? 'restricted' : 'path';
+  if (nature.includes('cyclable')) return restricted ? 'restricted' : 'cycle';
+  if (restricted) return 'restricted';
+  const imp = parseInt(p.importance, 10);
+  if (nature === 'route a 1 chaussee' && (isNaN(imp) || imp >= 4)) return 'small';
+  return 'road';
+}
+const STYLE = {
+  path:       { color: '#1a9e3f', weight: 4, opacity: .95 },
+  cycle:      { color: '#2b6fd6', weight: 3.5, opacity: .9 },
+  small:      { color: '#c98a00', weight: 2.5, opacity: .85 },
+  road:       { color: '#8a8f98', weight: 2, opacity: .8 },
+  motorway:   { color: '#8a8f98', weight: 2, opacity: .8 },
+  restricted: { color: '#d33', weight: 3, opacity: .9, dashArray: '2 6' },
+};
+const VERDICT = {
+  path: ['Public path or track (no restriction recorded by IGN)', '#1a9e3f'],
+  cycle: ['Cycle path', '#2b6fd6'],
+  small: ['Small local road', '#c98a00'],
+  road: ['Road', '#555'],
+  motorway: ['Motorway / slip road', '#555'],
+  restricted: ['Private or restricted access', '#d33'],
+};
+
+// ---------- Data loading (BD TOPO via Géoplateforme WFS) ----------
+const groups = {}; for (const k of Object.keys(STYLE)) groups[k] = L.layerGroup();
+const counts = {}; for (const k of Object.keys(STYLE)) counts[k] = 0;
+const features = new Map();   // id -> [{cls, p, ll}]
+const cells = new Map();      // key -> 'loading' | 'done' | 'error'
+let bboxOrder = null;         // WFS 2.0 axis order for EPSG:4326, confirmed by the first non-empty answer
+let active = 0; const queue = [];
+
+function wfsUrl(c, start, order) {
+  const [s, w, n, e] = c;
+  const bbox = order === 'latlon' ? `${s},${w},${n},${e}` : `${w},${s},${e},${n}`;
+  return `${GEOPF}/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=BDTOPO_V3:troncon_de_route` +
+    `&OUTPUTFORMAT=application/json&SRSNAME=EPSG:4326&COUNT=${PAGE}&STARTINDEX=${start}` +
+    `&BBOX=${bbox},urn:ogc:def:crs:EPSG::4326`;
+}
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+async function loadCell(key, c) {
+  // WFS 2.0 + EPSG:4326 expects lat,lon in the BBOX. Until a request returns data we also try lon,lat.
+  let order = bboxOrder || 'latlon';
+  let fs = (await fetchJSON(wfsUrl(c, 0, order))).features || [];
+  if (!fs.length && !bboxOrder) {
+    const other = order === 'latlon' ? 'lonlat' : 'latlon';
+    const alt = (await fetchJSON(wfsUrl(c, 0, other))).features || [];
+    if (alt.length) { fs = alt; order = other; }
+  }
+  if (fs.length && !bboxOrder) bboxOrder = order;
+  let start = 0, total = 0;
+  for (;;) {
+    addFeatures(fs); total += fs.length;
+    if (fs.length < PAGE) break;
+    start += PAGE;
+    fs = (await fetchJSON(wfsUrl(c, start, order))).features || [];
+  }
+  return total;
+}
+function toLatLngs(coords) { // GeoJSON [x,y] -> [lat,lng] with axis sanity check for France
+  return coords.map(([x, y]) => (x > 40 && x < 52 && y > -6 && y < 11) ? [x, y] : [y, x]);
+}
+function lineParts(g) {
+  if (!g) return [];
+  if (g.type === 'LineString') return [g.coordinates];
+  if (g.type === 'MultiLineString') return g.coordinates;
+  return [];
+}
+function addFeatures(fs) {
+  for (const f of fs) {
+    const p = props(f);
+    const id = p.cleabs || f.id; if (!id || features.has(id)) continue;
+    features.set(id, []);
+    const cls = classify(p); if (!cls) continue;
+    for (const part of lineParts(f.geometry)) {
+      const ll = toLatLngs(part.map(c => [c[0], c[1]])); // drop Z
+      if (ll.length < 2) continue;
+      const rec = { id, cls, p, ll };
+      if (!features.has(id)) features.set(id, []);
+      features.get(id).push(rec);
+      const line = L.polyline(ll, Object.assign({ renderer }, STYLE[cls]));
+      line.on('click', ev => onLineClick(ev, rec));
+      groups[cls].addLayer(line);
+      counts[cls]++;
+      graph.addLine(rec);
+    }
+  }
+  updateCounts();
+}
+function updateCounts() {
+  for (const k of ['path', 'cycle', 'small', 'road', 'restricted']) {
+    const el = document.getElementById('c-' + k);
+    el.textContent = counts[k] + (k === 'road' ? counts.motorway : 0) || '';
+  }
+}
+function cellsFor(b) {
+  const out = [];
+  for (let i = Math.floor(b.getSouth() / CELL); i * CELL < b.getNorth(); i++)
+    for (let j = Math.floor(b.getWest() / CELL); j * CELL < b.getEast(); j++)
+      out.push([`${i}_${j}`, [i * CELL, j * CELL, (i + 1) * CELL, (j + 1) * CELL]]);
+  return out;
+}
+function requestCells(list) {
+  const promises = [];
+  for (const [key, c] of list) {
+    if (cells.get(key) === 'done' || cells.get(key) === 'loading') { if (cells.get(key) === 'loading') promises.push(cellPromises.get(key)); continue; }
+    cells.set(key, 'loading');
+    const pr = new Promise(res => queue.push(() => loadCell(key, c)
+      .then(() => cells.set(key, 'done'))
+      .catch(err => { cells.set(key, 'error'); lastError = err; })
+      .finally(() => { active--; res(); pump(); })));
+    cellPromises.set(key, pr); promises.push(pr);
+  }
+  pump();
+  return Promise.all(promises);
+}
+const cellPromises = new Map(); let lastError = null;
+function pump() {
+  while (active < MAX_PARALLEL && queue.length) { active++; queue.shift()(); }
+  setStatus();
+}
+function setStatus() {
+  const el = document.getElementById('status');
+  const loading = [...cells.values()].filter(v => v === 'loading').length;
+  const errors = [...cells.values()].filter(v => v === 'error').length;
+  if (map.getZoom() < MIN_DATA_ZOOM) el.textContent = 'Zoom in (level 14+) to load paths.';
+  else if (loading) el.textContent = `Loading IGN data… (${loading} area${loading > 1 ? 's' : ''} left)`;
+  else if (errors) el.innerHTML = `Some areas failed to load (${esc(lastError && lastError.message || 'network')}). <a href="#" id="retry">Retry</a>`;
+  else el.textContent = 'IGN BD TOPO data loaded for this view.';
+  const r = document.getElementById('retry');
+  if (r) r.onclick = e => { e.preventDefault(); for (const [k, v] of cells) if (v === 'error') cells.delete(k); refresh(); };
+}
+function refresh() {
+  const z = map.getZoom();
+  const show = z >= MIN_DATA_ZOOM;
+  for (const [k, g] of Object.entries(groups)) {
+    const box = document.querySelector(`[data-cls="${k === 'motorway' ? 'road' : k}"]`);
+    const want = show && box && box.checked;
+    if (want && !map.hasLayer(g)) g.addTo(map); else if (!want && map.hasLayer(g)) map.removeLayer(g);
+  }
+  if (show) requestCells(cellsFor(map.getBounds().pad(0.1)));
+  setStatus();
+  const c = map.getCenter(); saveJSON('tb.view', { lat: c.lat, lng: c.lng, z });
+}
+map.on('moveend', refresh);
+document.querySelectorAll('#legend input[data-cls]').forEach(i => i.addEventListener('change', refresh));
+document.getElementById('cadastre').addEventListener('change', e => e.target.checked ? cadastre.addTo(map) : map.removeLayer(cadastre));
+
+// ---------- Popups ----------
+const SHOW_FIELDS = ['nature', 'importance', 'prive', 'acces_vehicule_leger', 'acces_pieton', 'cpx_classement_administratif', 'cpx_numero', 'cpx_gestionnaire', 'cpx_toponyme_route_nommee', 'nom_collaboratif_gauche', 'nom_collaboratif_droite', 'itineraire_vert', 'largeur_de_chaussee', 'nombre_de_voies', 'sens_de_circulation', 'restriction_de_hauteur', 'restriction_de_poids_total', 'date_de_mise_a_jour', 'date_modification', 'cleabs'];
+function onLineClick(ev, rec) {
+  if (planning) { L.DomEvent.stop(ev); addWaypoint(ev.latlng); return; }
+  const p = rec.p; const [label, color] = VERDICT[rec.cls];
+  const name = p.cpx_toponyme_route_nommee || p.nom_collaboratif_gauche || p.nom_collaboratif_droite || '';
+  let len = 0; for (let i = 1; i < rec.ll.length; i++) len += hav(rec.ll[i - 1], rec.ll[i]);
+  let rows = '';
+  const keys = SHOW_FIELDS.filter(k => p[k] != null && p[k] !== '')
+    .concat(Object.keys(p).filter(k => !SHOW_FIELDS.includes(k) && p[k] != null && p[k] !== '' && typeof p[k] !== 'object').slice(0, 25));
+  for (const k of keys) rows += `<tr><td class="muted">${esc(k)}</td><td>${esc(p[k])}</td></tr>`;
+  L.popup().setLatLng(ev.latlng).setContent(
+    `<div class="verdict" style="color:${color}">${esc(label)}</div>` +
+    `<div>${esc(p.nature || '')}${name ? ' – ' + esc(name) : ''} · ${fmtKm(len)}</div>` +
+    (rec.cls === 'path' ? `<div class="muted" style="margin-top:4px">Likely a <i>chemin rural</i>; check the cadastre overlay and signs on site.</div>` : '') +
+    `<details><summary class="muted" style="cursor:pointer;margin-top:6px">All IGN attributes</summary><table>${rows}</table></details>`
+  ).openOn(map);
+}
+
+// ---------- Routing graph (built from every vertex of loaded sections) ----------
+const graph = {
+  nodes: [],            // [lat,lng]
+  index: new Map(),     // key -> node id
+  adj: [],              // node id -> [{to, len, rec}]
+  key: ll => `${ll[0].toFixed(7)},${ll[1].toFixed(7)}`,
+  node(ll) {
+    const k = this.key(ll); let id = this.index.get(k);
+    if (id === undefined) { id = this.nodes.length; this.nodes.push(ll); this.adj.push([]); this.index.set(k, id); }
+    return id;
+  },
+  addLine(rec) {
+    let prev = this.node(rec.ll[0]);
+    for (let i = 1; i < rec.ll.length; i++) {
+      const cur = this.node(rec.ll[i]); if (cur === prev) continue;
+      const len = hav(this.nodes[prev], this.nodes[cur]);
+      this.adj[prev].push({ to: cur, len, rec }); this.adj[cur].push({ to: prev, len, rec });
+      prev = cur;
+    }
+  },
+  nearest(latlng, profile) {
+    let best = -1, bd = Infinity; const q = [latlng.lat, latlng.lng];
+    const cosLat = Math.cos(q[0] * Math.PI / 180);
+    for (let i = 0; i < this.nodes.length; i++) {
+      const n = this.nodes[i]; const dy = n[0] - q[0], dx = (n[1] - q[1]) * cosLat; const d = dx * dx + dy * dy;
+      if (d < bd && this.adj[i].some(e => isFinite(cost(e.rec, profile)))) { bd = d; best = i; }
+    }
+    return best < 0 ? null : { id: best, dist: hav(q, this.nodes[best]) };
+  },
+};
+function cost(rec, profile) { // multiplier on length; Infinity = forbidden
+  const p = rec.p, nat = norm(p.nature), { mode, pref } = profile;
+  const strict = pref === 'strict';
+  if (rec.cls === 'motorway') return Infinity;
+  if (rec.cls === 'restricted') return Infinity;
+  if (mode === 'vehicle') {
+    if (nat === 'sentier' || nat === 'escalier' || rec.cls === 'cycle') return Infinity;
+    if (norm(p.acces_vehicule_leger).startsWith('physiquement')) return Infinity;
+  }
+  if (mode === 'bike' && nat === 'escalier') return Infinity;
+  if (mode === 'walk' && norm(p.acces_pieton).startsWith('physiquement')) return Infinity;
+  switch (rec.cls) {
+    case 'path': return 1;
+    case 'cycle': return mode === 'walk' ? 1.3 : 1.05;
+    case 'small': return strict ? 3 : 1.6;
+    default: {
+      const imp = parseInt(p.importance, 10);
+      const base = imp <= 2 ? 8 : 4;
+      return strict ? base * 3 : base;
+    }
+  }
+}
+class Heap { // binary min-heap on [priority, value]
+  constructor() { this.a = []; }
+  get size() { return this.a.length; }
+  push(p, v) { const a = this.a; a.push([p, v]); let i = a.length - 1;
+    while (i > 0) { const j = (i - 1) >> 1; if (a[j][0] <= a[i][0]) break; [a[i], a[j]] = [a[j], a[i]]; i = j; } }
+  pop() { const a = this.a, top = a[0], last = a.pop();
+    if (a.length) { a[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i;
+      if (l < a.length && a[l][0] < a[m][0]) m = l; if (r < a.length && a[r][0] < a[m][0]) m = r;
+      if (m === i) break; [a[i], a[m]] = [a[m], a[i]]; i = m; } }
+    return top; }
+}
+function shortest(src, dst, profile) { // A* ; returns [{to,len,rec}] edges or null
+  const N = graph.nodes.length, g = new Float64Array(N).fill(Infinity), prevE = new Array(N), done = new Uint8Array(N);
+  const target = graph.nodes[dst]; const h = i => hav(graph.nodes[i], target);
+  const heap = new Heap(); g[src] = 0; heap.push(h(src), src);
+  while (heap.size) {
+    const [, u] = heap.pop(); if (done[u]) continue; done[u] = 1;
+    if (u === dst) break;
+    for (const e of graph.adj[u]) {
+      const c = cost(e.rec, profile); if (!isFinite(c)) continue;
+      const ng = g[u] + e.len * c;
+      if (ng < g[e.to]) { g[e.to] = ng; prevE[e.to] = { from: u, e }; heap.push(ng + h(e.to), e.to); }
+    }
+  }
+  if (!isFinite(g[dst])) return null;
+  const path = []; for (let v = dst; v !== src; v = prevE[v].from) path.push({ from: prevE[v].from, ...prevE[v].e });
+  return path.reverse();
+}
+
+// ---------- Trip planning UI ----------
+let planning = false;
+let waypoints = (loadJSON('tb.wps') || []).map(w => L.latLng(w[0], w[1]));
+let wpMarkers = [], routeLayer = L.layerGroup().addTo(map), lastRoute = null, routeSeq = 0;
+const planBtn = document.getElementById('planBtn'), planPanel = document.getElementById('plan');
+const profileSel = document.getElementById('profile'), prefSel = document.getElementById('pref');
+const savedProfile = loadJSON('tb.profile'); if (savedProfile) { profileSel.value = savedProfile.mode; prefSel.value = savedProfile.pref; }
+function setPlanning(on) {
+  planning = on; planBtn.classList.toggle('on', on); planPanel.style.display = on || waypoints.length ? 'block' : 'none';
+  map.getContainer().style.cursor = on ? 'crosshair' : '';
+}
+planBtn.onclick = () => setPlanning(!planning);
+map.on('click', e => { if (planning) addWaypoint(e.latlng); });
+function addWaypoint(ll) { waypoints.push(ll); drawWaypoints(); recompute(); }
+function drawWaypoints() {
+  wpMarkers.forEach(m => map.removeLayer(m)); wpMarkers = [];
+  waypoints.forEach((ll, i) => {
+    const m = L.marker(ll, { draggable: true, icon: L.divIcon({ className: '', html: `<div class="wp">${i + 1}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) }).addTo(map);
+    m.on('dragend', () => { waypoints[i] = m.getLatLng(); recompute(); });
+    m.on('click', () => { waypoints.splice(i, 1); drawWaypoints(); recompute(); });
+    wpMarkers.push(m);
+  });
+  saveJSON('tb.wps', waypoints.map(w => [w.lat, w.lng]));
+}
+document.getElementById('undoBtn').onclick = () => { waypoints.pop(); drawWaypoints(); recompute(); };
+document.getElementById('clearBtn').onclick = () => { waypoints = []; drawWaypoints(); recompute(); };
+document.getElementById('loopBtn').onclick = () => { if (waypoints.length > 1) addWaypoint(L.latLng(waypoints[0].lat, waypoints[0].lng)); };
+profileSel.onchange = prefSel.onchange = () => { saveJSON('tb.profile', profile()); recompute(); };
+const profile = () => ({ mode: profileSel.value, pref: prefSel.value });
+
+async function recompute() {
+  const seq = ++routeSeq; const stats = document.getElementById('stats');
+  routeLayer.clearLayers(); lastRoute = null; document.getElementById('gpxBtn').disabled = true;
+  if (waypoints.length < 2) { stats.textContent = waypoints.length ? 'Add another point.' : ''; return; }
+  const b = L.latLngBounds(waypoints).pad(0.25);
+  const need = cellsFor(b);
+  if (need.length > 120) { stats.textContent = 'Points are too far apart for one trip; add points in between.'; return; }
+  stats.textContent = 'Loading IGN data along the trip…';
+  await requestCells(need);
+  if (seq !== routeSeq) return;
+  stats.textContent = 'Computing route…';
+  await new Promise(r => setTimeout(r, 0));
+  const prof = profile(); const legs = []; let gap = 0;
+  for (let i = 1; i < waypoints.length; i++) {
+    const a = graph.nearest(waypoints[i - 1], prof), z = graph.nearest(waypoints[i], prof);
+    if (!a || !z) { stats.textContent = 'No usable path near these points.'; return; }
+    gap = Math.max(gap, a.dist, z.dist);
+    const p = a.id === z.id ? [] : shortest(a.id, z.id, prof);
+    if (!p) { stats.textContent = `No route found between points ${i} and ${i + 1} for this mode.`; return; }
+    legs.push(p);
+  }
+  if (seq !== routeSeq) return;
+  drawRoute(legs, gap);
+}
+function drawRoute(legs, gap) {
+  const by = { path: 0, cycle: 0, small: 0, road: 0 }; let total = 0; const coords = [];
+  for (const leg of legs) for (const e of leg) {
+    const k = e.rec.cls === 'motorway' ? 'road' : e.rec.cls; by[k] = (by[k] || 0) + e.len; total += e.len;
+    if (!coords.length) coords.push(graph.nodes[e.from]); coords.push(graph.nodes[e.to]);
+  }
+  // halo + coloured segments
+  L.polyline(coords, { color: '#fff', weight: 9, opacity: .9, interactive: false }).addTo(routeLayer);
+  L.polyline(coords, { color: '#7b2fd0', weight: 5, opacity: .9, interactive: false }).addTo(routeLayer);
+  lastRoute = coords; document.getElementById('gpxBtn').disabled = !coords.length;
+  const pct = k => total ? Math.round(100 * by[k] / total) : 0;
+  const hours = total / ({ walk: 4200, bike: 12000, vehicle: 20000 }[profile().mode]);
+  const t = `${Math.floor(hours)}h${String(Math.round((hours % 1) * 60)).padStart(2, '0')}`;
+  document.getElementById('stats').innerHTML =
+    `<b style="font-size:15px;color:#1d2330">${fmtKm(total)}</b> · ~${t} <span id="elev"></span>` +
+    `<div class="bar"><span style="width:${pct('path')}%;background:var(--path)"></span><span style="width:${pct('cycle')}%;background:var(--cycle)"></span><span style="width:${pct('small')}%;background:var(--small)"></span><span style="width:${pct('road')}%;background:var(--road)"></span></div>` +
+    `${pct('path')}% public paths · ${pct('cycle')}% cycle · ${pct('small')}% small roads · ${pct('road')}% roads` +
+    (gap > 150 ? `<div style="color:#d33">A point is ${fmtKm(gap)} from the nearest usable path.</div>` : '');
+  elevation(coords);
+}
+async function elevation(coords) {
+  if (coords.length < 2) return;
+  const step = Math.max(1, Math.ceil(coords.length / 150)); const pts = coords.filter((_, i) => i % step === 0 || i === coords.length - 1);
+  const seq = routeSeq;
+  try {
+    const url = `${GEOPF}/altimetrie/1.0/calcul/alti/rest/elevationLine.json?resource=ign_rge_alti_wld&delimiter=|&sampling=${Math.min(200, pts.length * 2)}&profile_mode=simple` +
+      `&lon=${pts.map(p => p[1].toFixed(6)).join('|')}&lat=${pts.map(p => p[0].toFixed(6)).join('|')}`;
+    const j = await fetchJSON(url); if (seq !== routeSeq) return;
+    let up = 0, down = 0;
+    if (j.height_differences) { up = j.height_differences.positive; down = j.height_differences.negative; }
+    else { const z = (j.elevations || []).map(e => e.z).filter(z => z > -1000); for (let i = 1; i < z.length; i++) { const d = z[i] - z[i - 1]; if (d > 0) up += d; else down -= d; } }
+    const el = document.getElementById('elev'); if (el) el.textContent = `· ↗ ${Math.round(up)} m ↘ ${Math.round(Math.abs(down))} m`;
+  } catch (e) { /* elevation is optional */ }
+}
+document.getElementById('gpxBtn').onclick = () => {
+  if (!lastRoute) return;
+  const pts = lastRoute.map(p => `<trkpt lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}"/>`).join('\n');
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="TrailBlazing" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>TrailBlazing trip</name><trkseg>\n${pts}\n</trkseg></trk>\n</gpx>\n`;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
+  a.download = `trailblazing-${new Date().toISOString().slice(0, 10)}.gpx`; document.body.appendChild(a); a.click(); a.remove();
+};
+
+// ---------- Geolocation ----------
+let me = null, meAcc = null, follow = false;
+document.getElementById('locBtn').onclick = () => {
+  if (!navigator.geolocation) return alert('Geolocation is not available in this browser.');
+  follow = true;
+  if (me) { map.setView(me.getLatLng(), Math.max(map.getZoom(), 15)); return; }
+  navigator.geolocation.watchPosition(pos => {
+    const ll = [pos.coords.latitude, pos.coords.longitude];
+    if (!me) {
+      meAcc = L.circle(ll, { radius: pos.coords.accuracy, color: '#2b6fd6', weight: 1, fillOpacity: .1, interactive: false }).addTo(map);
+      me = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 2, fillColor: '#2b6fd6', fillOpacity: 1 }).addTo(map);
+    } else { me.setLatLng(ll); meAcc.setLatLng(ll).setRadius(pos.coords.accuracy); }
+    if (follow) { map.setView(ll, Math.max(map.getZoom(), 15)); follow = false; }
+  }, err => alert('Could not get your position: ' + err.message), { enableHighAccuracy: true, maximumAge: 10000 });
+};
+
+// ---------- Search (IGN geocoding) ----------
+const q = document.getElementById('q'), results = document.getElementById('results'); let qTimer;
+q.addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(search, 300); });
+q.addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(qTimer); search(true); } });
+async function search(goFirst) {
+  const text = q.value.trim(); if (text.length < 3) { results.style.display = 'none'; return; }
+  try {
+    const j = await fetchJSON(`${GEOPF}/geocodage/search?q=${encodeURIComponent(text)}&limit=6`);
+    const fs = j.features || [];
+    if (goFirst && fs.length) return pick(fs[0]);
+    results.innerHTML = ''; fs.forEach(f => { const d = document.createElement('div'); d.textContent = f.properties.label; d.onclick = () => pick(f); results.appendChild(d); });
+    results.style.display = fs.length ? 'block' : 'none';
+  } catch (e) { results.innerHTML = '<div class="muted">Search unavailable</div>'; results.style.display = 'block'; }
+}
+function pick(f) {
+  const [lng, lat] = f.geometry.coordinates; results.style.display = 'none'; q.value = f.properties.label;
+  map.setView([lat, lng], f.properties.type === 'municipality' ? 14 : 16);
+}
+document.addEventListener('click', e => { if (!document.getElementById('top').contains(e.target)) results.style.display = 'none'; });
+
+// ---------- Panels ----------
+document.getElementById('helpBtn').onclick = () => { const h = document.getElementById('help'); h.style.display = h.style.display === 'block' ? 'none' : 'block'; };
+document.getElementById('helpClose').onclick = () => { document.getElementById('help').style.display = 'none'; };
+document.getElementById('legendBtn').onclick = () => document.getElementById('legend').classList.toggle('open');
+
+drawWaypoints(); setPlanning(false); refresh(); if (waypoints.length > 1) recompute();
+window.__tb = { graph, features, classify, cost, shortest, counts, cells }; // for debugging
+</script>
+</body>
+</html>
