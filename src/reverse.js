@@ -33,7 +33,8 @@ const RR_MODEL = 'claude-opus-5-5';
   #rrTable button { padding:2px 5px; font-size:12px; }
   #rrTable svg { cursor:crosshair; display:block; }
   #rrTable tr.bad td { background:#fff1f0; } #rrTable tr.warn td { background:#fff8e6; } #rrTable tr.ok td { background:#f1faf3; }
-  #rrTable tr.sel td { outline:2px solid var(--route); }
+  #rrTable tr.sel td { background:#efe6fb; }
+  #rrPrevDial svg { cursor:crosshair; display:block; }
   .rrnum { background:#fff; color:#000; border:2px solid #000; border-radius:4px; font:700 11px/16px system-ui; padding:0 3px; white-space:nowrap; }
   .rrnum.bad { border-color:#d33; color:#d33; } .rrnum.warn { border-color:#b8860b; }
   @media (max-width:600px) { #rr { left:10px; right:10px; width:auto; max-width:none; top:60px; max-height:55%; } }`;
@@ -51,10 +52,20 @@ rrPanel.innerHTML = `
     <div id="rrScan"></div>
     <div class="row"><input type="password" id="rrKey" placeholder="Anthropic API key (sk-ant-…) to read the scan" autocomplete="off">
       <button id="rrRead" disabled>Read boxes</button></div>
+    <div class="row"><button id="rrReadText" disabled title="Free, no API: reads the distances, box numbers, roads, notes, CAP and GPS printed as text in a digital PDF (not a scan). You then click the arrows.">Read text only (free)</button><span class="muted">for digital PDFs; you click the arrows</span></div>
     <div class="muted">Reading uses Claude's vision through your own <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic API key</a> (roughly 5 to 10 cents a page); the key stays in this browser and is sent only to api.anthropic.com. No key? Type the boxes in below.</div>
     <div id="rrReadStatus" class="muted"></div>
   </div>
   <div class="step"><b>2. Boxes</b> <select id="rrSec" style="display:none;max-width:260px" title="Roadbook section (distances restart at 0 in each)"></select> <span class="muted">Check every box against the scan. Click a tulip to set the exit arrow; shift-click adds or removes a side track. 📍 pins a box to a map point when you know where it is.</span>
+    <div id="rrPrev" style="display:none;margin-top:6px;border:1px solid #cdd2da;border-radius:8px;padding:6px">
+      <canvas id="rrPrevCv" style="width:100%;display:block;border:1px solid #eee"></canvas>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
+        <div id="rrPrevDial"></div>
+        <div style="flex:1;min-width:0"><b id="rrPrevTitle"></b>
+          <div class="muted" style="font-size:12px">Click the dial where the exit arrow points (you arrive from the bottom). Shift-click marks a side track. The centre clears the arrow.</div>
+          <div class="row"><button id="rrPrevBack">◂</button><button id="rrPrevNext">Next ▸</button><button id="rrPrevNextTodo" title="Next box without an arrow">Next to do ▸▸</button><button id="rrPrevClose">✕</button></div></div>
+      </div>
+    </div>
     <table id="rrTable"><thead><tr><th>#</th><th>Total km</th><th>Tulip</th><th>CAP</th><th>Exit on / road</th><th></th></tr></thead><tbody></tbody></table>
     <div class="row"><button id="rrAdd">+ Box</button><button id="rrClear">Clear all</button><button id="rrSave" title="Save the boxes as a JSON file">Save</button><button id="rrLoad">Load</button><input type="file" id="rrLoadFile" accept=".json,application/json" style="display:none"></div>
   </div>
@@ -92,7 +103,7 @@ function rrRenderSecs() {
   sel.innerHTML = RR.secs.map((s, i) => `<option value="${i}"${i === RR.cur ? ' selected' : ''}>${esc(s.name || 'Section ' + (i + 1))} (${s.boxes.length} boxes${s.boxes.length && s.boxes[s.boxes.length - 1].km != null ? ', ' + s.boxes[s.boxes.length - 1].km + ' km' : ''})</option>`).join('');
 }
 function rrSelectSec(i) {
-  RR.cur = i; RR.result = null; RR.layer.clearLayers(); rrSaveBoxes(); rrRenderSecs(); rrRender(); rrDrawPins();
+  RR.cur = i; RR.result = null; RR.sel = null; $rr('rrPrev').style.display = 'none'; RR.layer.clearLayers(); rrSaveBoxes(); rrRenderSecs(); rrRender(); rrDrawPins();
   const g = RR.boxes.slice(0, 3).find(b => b.gps); // the roadbook gives the start coordinates
   if (g) { rrSetStart(L.latLng(g.lock[0], g.lock[1])); map.setView(g.lock, Math.max(map.getZoom(), 15)); }
   $rr('rrStartPrev').style.display = RR.lastEnd ? '' : 'none';
@@ -112,6 +123,41 @@ function rrDial(b, size = 46) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${parts.join('')}</svg>`;
 }
 function rrRenumber() { RR.boxes.forEach((b, i) => { b.n = i + 1; }); }
+// ---------- Box-by-box review: the box cut out of the page, next to a big dial ----------
+RR.sel = null;
+async function rrPreview(i) {
+  const b = RR.boxes[i]; if (!b) return;
+  RR.sel = i; $rr('rrPrev').style.display = 'block';
+  $rr('rrPrevTitle').textContent = `Line ${b.n}${b.num != null ? ' (box no. ' + b.num + ' in the roadbook)' : ''}${b.km != null ? ' · ' + b.km + ' km' : ''}${b.road ? ' · ' + b.road : ''}`;
+  $rr('rrPrevDial').innerHTML = rrDial(b, 120);
+  [...$rr('rrTable').querySelectorAll('tbody tr')].forEach(tr => tr.classList.toggle('sel', +tr.dataset.i === i));
+  const cv = $rr('rrPrevCv'), pg = b.src && RR.pages.find(p => p.pdfPage === b.src.page);
+  if (!pg) { cv.style.display = 'none'; return; }
+  cv.style.display = '';
+  const { canvas } = await pg.render(); if (RR.sel !== i) return;
+  const y0 = Math.max(0, Math.floor(b.src.y0 * canvas.height) - 2), y1 = Math.min(canvas.height, Math.ceil(b.src.y1 * canvas.height) + 2);
+  const x0 = Math.round(canvas.width * 0.04), x1 = Math.round(canvas.width * 0.76); // drop the margins and the distance-to-go column
+  cv.width = x1 - x0; cv.height = Math.max(10, y1 - y0);
+  cv.getContext('2d').drawImage(canvas, x0, y0, x1 - x0, y1 - y0, 0, 0, x1 - x0, y1 - y0);
+  const row = $rr('rrTable').querySelector(`tr[data-i="${i}"]`); if (row) row.scrollIntoView({ block: 'nearest' });
+}
+function rrDialAngle(e, svg) {
+  const r = svg.getBoundingClientRect(), dx = e.clientX - r.left - r.width / 2, dy = e.clientY - r.top - r.height / 2;
+  if (dx * dx + dy * dy < (r.width / 12) ** 2) return null;
+  const a = Math.round(Math.atan2(dx, -dy) * 180 / Math.PI / 5) * 5; return a === -180 ? 180 : a;
+}
+$rr('rrPrevDial').addEventListener('click', e => {
+  const b = RR.boxes[RR.sel], svg = $rr('rrPrevDial').querySelector('svg'); if (!b || !svg) return;
+  const a = rrDialAngle(e, svg);
+  if (e.shiftKey || e.altKey) { if (a == null) return; b.branches = b.branches || []; const k = b.branches.findIndex(x => Math.abs(relAngle(x, a)) < 20); if (k >= 0) b.branches.splice(k, 1); else b.branches.push(a); }
+  else b.rel = a;
+  RR.result = null; rrSaveBoxes(); rrRender();
+  if (!(e.shiftKey || e.altKey) && a != null) rrPreview(Math.min(RR.boxes.length - 1, RR.sel + 1)); else rrPreview(RR.sel);
+});
+$rr('rrPrevBack').onclick = () => rrPreview(Math.max(0, (RR.sel || 0) - 1));
+$rr('rrPrevNext').onclick = () => rrPreview(Math.min(RR.boxes.length - 1, (RR.sel ?? -1) + 1));
+$rr('rrPrevNextTodo').onclick = () => { const k = RR.boxes.findIndex((b, j) => j > (RR.sel ?? -1) && b.rel == null && j > 0); if (k >= 0) rrPreview(k); };
+$rr('rrPrevClose').onclick = () => { $rr('rrPrev').style.display = 'none'; RR.sel = null; rrRender(); };
 function rrRender() {
   rrRenumber();
   const res = RR.result && RR.result.boxes;
@@ -119,8 +165,8 @@ function rrRender() {
   tb.innerHTML = RR.boxes.map((b, i) => {
     const r = res && res[i];
     const cls = r ? r.status : '';
-    return `<tr data-i="${i}" class="${cls}" title="${r ? esc(r.msg) : ''}">
-      <td><b>${b.n}</b></td>
+    return `<tr data-i="${i}" class="${cls}${RR.sel === i ? ' sel' : ''}" title="${r ? esc(r.msg) : ''}">
+      <td title="Show this box from the scan" style="cursor:pointer"><b>${b.n}</b>${b.num != null && b.num !== b.n ? '<div class="muted" style="font-size:10px" title="Box number printed in the roadbook">no.' + b.num + '</div>' : ''}${b.src ? '<div class="muted" style="font-size:10px">p.' + b.src.page + '</div>' : ''}</td>
       <td><input data-f="km" value="${b.km == null ? '' : b.km}" inputmode="decimal"></td>
       <td data-dial="${i}">${rrDial(b)}</td>
       <td><input class="cap" data-f="cap" value="${b.cap == null ? '' : b.cap}" inputmode="numeric" placeholder="–"></td>
@@ -133,6 +179,7 @@ function rrRender() {
   rrUpdateButtons();
 }
 function rrUpdateButtons() {
+  $rr('rrReadText').disabled = !RR.pages.some(p => p.pdfPage) || RR.running;
   $rr('rrRead').disabled = !RR.pages.length || !$rr('rrKey').value.trim() || RR.running;
   $rr('rrRun').disabled = RR.running || !RR.start || RR.boxes.length < 2;
   $rr('rrGpx').disabled = $rr('rrPlan').disabled = !RR.result || !RR.result.coords.length;
@@ -162,6 +209,7 @@ $rr('rrTable').addEventListener('click', e => {
     }
     rrSaveBoxes(); rrRender(); return;
   }
+  if (e.target.closest('td') === tr.firstElementChild) { rrPreview(i); return; }
   const act = e.target.dataset.act;
   if (act === 'del') { RR.boxes.splice(i, 1); RR.result = null; }
   else if (act === 'ra') { b.ra = !b.ra; RR.result = null; }
@@ -197,7 +245,7 @@ function rrCleanBox(b) {
   const road = String(b.road ?? '').toUpperCase().replace(/\s+/g, '').slice(0, 12);
   return { km: num(b.km ?? b.total_km), road, ra: !!(b.ra ?? b.roundabout), gps: !!(b.gps || gps), num: num(b.num ?? b.number), rel: rel == null ? null : relAngle(rel, 0), cap: cap == null ? null : ((Math.round(cap) % 360) + 360) % 360,
     surf: ['road', 'track', 'path'].includes(b.surf ?? b.exit_surface) ? (b.surf ?? b.exit_surface) : null,
-    branches: (b.branches ?? b.side_tracks ?? []).map(Number).filter(isFinite), notes: b.notes ? String(b.notes).slice(0, 200) : '', lock: gps ? [lat, lon] : (b.lock || null) };
+    branches: (b.branches ?? b.side_tracks ?? []).map(Number).filter(isFinite), notes: b.notes ? String(b.notes).slice(0, 200) : '', lock: gps ? [lat, lon] : (b.lock || null), src: b.src || null };
 }
 
 // ---------- Start point and pins ----------
@@ -243,14 +291,12 @@ $rr('rrFile').onchange = async e => {
       try {
         const lib = await rrPdfjs();
         const doc = await lib.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
-        for (let p = 1; p <= doc.numPages; p++) RR.pages.push({ label: `${f.name} page ${p}`, pdfPage: ++pdfPages, get: async () => {
-          const page = await doc.getPage(p), v0 = page.getViewport({ scale: 1 });
-          const vp = page.getViewport({ scale: 2000 / Math.max(v0.width, v0.height) }); // long edge 2000 px
-          const cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
-          const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
-          await page.render({ canvasContext: ctx, viewport: vp }).promise;
-          return rrCanvasBlock(cv);
-        } });
+        for (let p = 1; p <= doc.numPages; p++) {
+          const pg = { label: `${f.name} page ${p}`, pdfPage: ++pdfPages, doc, p };
+          pg.render = () => rrRenderPdfPage(pg);
+          pg.get = async () => rrCanvasBlock((await pg.render()).canvas);
+          RR.pages.push(pg);
+        }
       } catch (err) { $rr('rrReadStatus').innerHTML = `<span style="color:#d33">Cannot open ${esc(f.name)}: ${esc(err.message)}</span>`; }
     } else {
       box.insertAdjacentHTML('beforeend', `<img src="${url}" alt="${esc(f.name)}">`);
@@ -261,6 +307,18 @@ $rr('rrFile').onchange = async e => {
   $rr('rrPageCount').textContent = pdfPages ? `of ${pdfPages}` : '';
   rrUpdateButtons();
 };
+const rrPageCache = new Map(); // a few rendered pages, for reading and for the box previews
+async function rrRenderPdfPage(pg) {
+  if (rrPageCache.has(pg)) return rrPageCache.get(pg);
+  const page = await pg.doc.getPage(pg.p), v0 = page.getViewport({ scale: 1 });
+  const vp = page.getViewport({ scale: 2000 / Math.max(v0.width, v0.height) }); // long edge 2000 px
+  const canvas = document.createElement('canvas'); canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  const out = { canvas, vp, page };
+  rrPageCache.set(pg, out); if (rrPageCache.size > 6) rrPageCache.delete(rrPageCache.keys().next().value);
+  return out;
+}
 function rrPageSel(txt, n) { // "6-7, 12-20" -> set of 1-based PDF page numbers; empty = all
   const out = new Set(), t = String(txt || '').trim();
   if (!t || /^all$/i.test(t)) { for (let i = 1; i <= n; i++) out.add(i); return out; }
@@ -404,6 +462,127 @@ $rr('rrRead').onclick = async () => {
     st.innerHTML = `Read <b>${nBoxes}</b> boxes in <b>${secs.length}</b> section${secs.length > 1 ? 's' : ''}${gps ? `, ${gps} with GPS points (pinned)` : ''}${low ? `, <b style="color:#d33">${low} unsure</b>` : ''}. Pick the section to rebuild above the table, and check its distances and arrows against the scan.` +
       (errors.length ? `<br><span style="color:#d33">${errors.length} page${errors.length > 1 ? 's' : ''} failed: ${esc(errors.slice(0, 3).join('; '))}</span>` : '');
   } catch (err) { st.innerHTML = `<span style="color:#d33">Reading failed: ${esc(err.message)}</span>`; }
+  finally { RR.running = false; rrUpdateButtons(); }
+};
+
+// ---------- Free reading of digital PDFs (text layer, no API) ----------
+// Distances, box numbers, road numbers, notes, CAP and GPS are printed as text in roadbooks made
+// with Word or a roadbook editor. Rows are found from the table's horizontal rules on the rendered
+// page; the total-distance column is the leftmost column of distances (or the one labelled "Total").
+function rrRules(canvas) { // y (px) of long horizontal lines
+  const { width: W, height: H } = canvas, d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+  const ys = [];
+  for (let y = 0; y < H; y++) {
+    let dark = 0, run = 0, best = 0;
+    for (let x = 0; x < W; x++) {
+      const k = (y * W + x) * 4, lum = 0.3 * d[k] + 0.59 * d[k + 1] + 0.11 * d[k + 2];
+      if (lum < 140) { dark++; run++; if (run > best) best = run; } else run = 0;
+    }
+    if (best > W * 0.45 || dark > W * 0.75) ys.push(y);
+  }
+  const lines = []; // merge thick lines
+  for (const y of ys) { const l = lines[lines.length - 1]; if (l && y - l.y1 <= 3) l.y1 = y; else lines.push({ y0: y, y1: y }); }
+  return lines.map(l => (l.y0 + l.y1) / 2);
+}
+const RR_NUM = /^\d{1,4}[.,]\d{1,3}$|^0$/;
+const rrSecRe = /^(CH|CP|DES|AES|ES|SS|DSS|ASS|PC|Liaison|Secteur|Section|[ÉE]tape|Stage|Leg|Spéciale|Speciale|Zone|Z[ÔO]NE)\b/i;
+async function rrReadTextPage(pg) {
+  const { canvas, vp, page } = await pg.render();
+  const W = canvas.width, H = canvas.height;
+  const tc = await page.getTextContent();
+  const raw = tc.items.filter(it => it.str && it.str.trim()).map(it => {
+    const [x, y] = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
+    const size = Math.hypot(it.transform[2], it.transform[3]) * vp.scale;
+    return { s: it.str, x, y: y - size * 0.35, w: it.width * vp.scale, size }; // y ~ middle of the text
+  }).sort((a, b) => a.y - b.y || a.x - b.x);
+  const items = []; // glue the pieces of one word or number split by a font change ("0." + "403")
+  for (const it of raw) {
+    const o = items.find(o => Math.abs(o.y - it.y) < Math.min(o.size, it.size) * 0.45 && it.x - (o.x + o.w) < Math.min(o.size, it.size) * 0.35 && it.x - (o.x + o.w) > -Math.min(o.size, it.size) * 0.6 && it.x > o.x);
+    if (o) { const gap = it.x - (o.x + o.w); o.s += (gap > o.size * 0.15 ? ' ' : '') + it.s; o.w = it.x + it.w - o.x; o.size = Math.max(o.size, it.size); }
+    else items.push({ ...it });
+  }
+  items.forEach(it => { it.s = it.s.replace(/\s+/g, ' ').trim(); });
+  for (let k = items.length - 1; k >= 0; k--) if (!items[k].s) items.splice(k, 1);
+  const lineText = (it) => items.filter(o => Math.abs(o.y - it.y) < it.size * 0.6).map(o => o.s).join(' ');
+  const label = re => items.find(it => re.test(it.s));
+  const totLabel = label(/^total$/i), partLabel = label(/^partiel$|^partial$/i);
+  const footerY = (label(/^page\s+\d+/i) || { y: H * 0.97 }).y - 5;
+  const headY = totLabel ? totLabel.y + totLabel.size * 0.6 : (partLabel ? partLabel.y + partLabel.size * 0.6 : 0);
+  // distances below the header, not on a "Distance 6.633 km" or "Moyenne" line
+  let nums = items.filter(it => RR_NUM.test(it.s) && it.y > headY && it.y < footerY && !/km\b|km\/h|moyenne|distance|temps|page/i.test(lineText(it)));
+  // column clusters by x
+  const cx = it => it.x + it.w / 2; // column clusters by the centre of the numbers (they may be left, centre or right aligned)
+  const xs = [...nums].sort((a, b) => cx(a) - cx(b)), cols = [];
+  for (const it of xs) { const c = cols[cols.length - 1]; if (c && cx(it) - c.c1 < W * 0.06) { c.items.push(it); c.c1 = cx(it); c.x1 = Math.max(c.x1, it.x + it.w); c.x0 = Math.min(c.x0, it.x); } else cols.push({ x0: it.x, x1: it.x + it.w, c1: cx(it), items: [it] }); }
+  if (!cols.length) return { section: '', boxes: [] };
+  let totCol = totLabel ? cols.reduce((a, c) => Math.abs(c.x0 - totLabel.x) < Math.abs(a.x0 - totLabel.x) ? c : a) : cols.find(c => c.x0 < W * 0.45) || cols[0];
+  const partCol = partLabel ? cols.reduce((a, c) => Math.abs(c.x0 - partLabel.x) < Math.abs(a.x0 - partLabel.x) ? c : a) : cols.find(c => c !== totCol && c.x0 < W * 0.45 && c.x0 > totCol.x0);
+  // rows: between horizontal rules; without rules, halfway between totals
+  const rules = rrRules(canvas).filter(y => y > headY - 5);
+  let totals = totCol.items.slice().sort((a, b) => a.y - b.y);
+  const band = t => {
+    const above = rules.filter(y => y < t.y).pop(), below = rules.find(y => y > t.y);
+    if (above != null && below != null && below - above > t.size * 1.5) return [above, below];
+    const k = totals.indexOf(t), prev = totals[k - 1], next = totals[k + 1];
+    return [prev ? (prev.y + t.y) / 2 : t.y - (next ? (next.y - t.y) / 2 : H * 0.08), next ? (t.y + next.y) / 2 : t.y + (prev ? (t.y - prev.y) / 2 : H * 0.08)];
+  };
+  // two totals in one row (e.g. raid style: big total above a small partial in the same column): keep the bigger one
+  const rows = new Map();
+  for (const t of totals) { const bd = band(t), key = bd.map(Math.round).join('_'), o = rows.get(key); if (!o || t.size > o.t.size) rows.set(key, { t, bd }); }
+  const used = new Set([...cols.flatMap(c => c === totCol || c === partCol || c.x0 > W * 0.75 ? c.items : [])]);
+  const boxes = [];
+  for (const { t, bd } of [...rows.values()].sort((a, b) => a.t.y - b.t.y)) {
+    const inRow = items.filter(it => it.y >= bd[0] && it.y <= bd[1] && it.y < footerY && !used.has(it) && it !== t);
+    const txt = inRow.map(it => it.s).join(' ');
+    const numIt = inRow.filter(it => /^\d{1,3}$/.test(it.s) && it.x > Math.max(totCol.x1, partCol ? partCol.x1 : 0) + W * 0.03 && it.x < W * 0.55).sort((a, b) => a.x - b.x)[0];
+    let lat = null, lon = null;
+    let m = /(-?\d{1,2}[.,]\d{3,})\s*[,;/ ]\s*(-?\d{1,3}[.,]\d{3,})/.exec(txt);
+    if (m) { lat = +m[1].replace(',', '.'); lon = +m[2].replace(',', '.'); }
+    else if ((m = /([NS])\s*(\d{1,2})°\s*(\d{1,2}(?:[.,]\d+)?)['’]?\s*(?:(\d{1,2}(?:[.,]\d+)?)["”])?\s*[, ]*([EW])\s*(\d{1,3})°\s*(\d{1,2}(?:[.,]\d+)?)['’]?\s*(?:(\d{1,2}(?:[.,]\d+)?)["”])?/i.exec(txt))) {
+      const dm = (d, mi, se) => +d + parseFloat(String(mi).replace(',', '.')) / 60 + (se ? parseFloat(String(se).replace(',', '.')) / 3600 : 0);
+      lat = dm(m[2], m[3], m[4]) * (/s/i.test(m[1]) ? -1 : 1); lon = dm(m[6], m[7], m[8]) * (/w/i.test(m[5]) ? -1 : 1);
+    }
+    const cap = (m = /\bCAP\s*:?\s*(\d{1,3})\b/i.exec(txt)) ? +m[1] % 360 : null;
+    const road = (m = /\b(RD|RN|D|N|C|VC|CD|M)\s?(\d{1,4}[A-Z]?)\b/.exec(txt)) ? m[1] + m[2] : '';
+    const notes = inRow.filter(it => it !== numIt && !RR_NUM.test(it.s)).map(it => it.s).join(' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+    boxes.push({ number: numIt ? +numIt.s : null, total_km: parseFloat(t.s.replace(',', '.')), exit_angle: null, side_tracks: [], roundabout: /rond[- ]?point|giratoire|roundabout/i.test(txt),
+      cap, exit_surface: 'unknown', road, gps_lat: lat, gps_lon: lon, notes, confidence: 'medium', src: { page: pg.pdfPage, y0: bd[0] / H, y1: bd[1] / H } });
+  }
+  // section: the codes printed above the table (CH 0A/2C, CH 1/3, ES 2, Liaison…)
+  const codeOf = it => { // "CH" + "0A" + "/2C" -> "CH 0A/2C"
+    let txt = it.s, last = it;
+    for (;;) {
+      const nx = items.filter(o => Math.abs(o.y - it.y) < it.size * 0.5 && o.x > last.x && o.x - (last.x + last.w) < it.size * 2.5 && /^[\d\/A-Z–-]{1,6}$/.test(o.s)).sort((p, q) => p.x - q.x)[0];
+      if (!nx) return txt;
+      txt += (/^[\/–-]/.test(nx.s) || /[\/–-]$/.test(txt) ? '' : ' ') + nx.s; last = nx;
+    }
+  };
+  const head = items.filter(it => it.y < (headY || (totals[0] ? band(totals[0])[0] : H * 0.2)) && rrSecRe.test(it.s) && !/^(secteur|section|[ée]tape|stage|leg)\s*\d*$/i.test(it.s)).map(codeOf);
+  return { section: [...new Set(head)].join(' · '), boxes };
+}
+$rr('rrReadText').onclick = async () => {
+  const st = $rr('rrReadStatus');
+  const nPdf = RR.pages.filter(p => p.pdfPage).length, sel = rrPageSel($rr('rrPages').value, nPdf);
+  const todo = RR.pages.filter(p => p.pdfPage && sel.has(p.pdfPage));
+  if (!todo.length) { st.textContent = 'No PDF page selected.'; return; }
+  RR.running = true; rrUpdateButtons();
+  try {
+    const results = [];
+    for (let k = 0; k < todo.length; k++) {
+      st.textContent = `Reading the text of page ${k + 1} of ${todo.length}…`;
+      try { results.push(await rrReadTextPage(todo[k])); } catch (err) { console.warn(err); }
+    }
+    const secs = rrSplitSections(results);
+    const nBoxes = secs.reduce((a, s) => a + s.boxes.length, 0);
+    if (!nBoxes) throw new Error('no distances found in the text of these pages. Is it a scan? Then use "Read boxes" or type them in.');
+    const old = RR.secs.reduce((a, s) => a + s.boxes.length, 0);
+    if (old && !confirm(`Replace the ${old} boxes you have with the ${nBoxes} boxes read from the text?`)) { st.textContent = 'Kept the current boxes.'; return; }
+    secs.forEach(s => s.boxes.forEach(b => { delete b.conf; }));
+    RR.secs = secs; RR.result = null; rrSelectSec(0);
+    const gps = secs.reduce((a, s) => a + s.boxes.filter(b => b.gps).length, 0);
+    st.innerHTML = `Read <b>${nBoxes}</b> boxes in <b>${secs.length}</b> section${secs.length > 1 ? 's' : ''} from the text${gps ? `, ${gps} GPS points` : ''}. Now give each box its arrow: the box from the page is shown next to a big dial, click the exit and it moves to the next box. Boxes left without an arrow are matched on distance and road number only.`;
+    rrPreview(RR.boxes.findIndex((b, i) => i > 0 && b.km != null) >= 0 ? RR.boxes.findIndex((b, i) => i > 0 && b.km != null) : 0);
+  } catch (err) { st.innerHTML = `<span style="color:#d33">${esc(err.message)}</span>`; }
   finally { RR.running = false; rrUpdateButtons(); }
 };
 
