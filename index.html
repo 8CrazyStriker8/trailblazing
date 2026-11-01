@@ -1116,7 +1116,7 @@ function samples(ll, step = 10, skip = 15) { // points along the line, skipping 
   return out;
 }
 async function checkCadastre(recs) {
-  recs = recs.filter(r => r.cls === 'path' && !r.cad && !r.cadPending);
+  recs = recs.filter(r => r.cls === 'path' && !r.cad && !r.cadPending && r.p.source !== 'osm');
   if (!recs.length) return;
   recs.forEach(r => r.cadPending = true);
   const work = recs.map(r => ({ r, pts: samples(r.ll) }));
@@ -1161,6 +1161,7 @@ function restyle(r) {
 const profileMode = () => document.getElementById('profile').value;
 function restyleAll() { for (const arr of features.values()) for (const r of arr) if (r.cad || r.accDone) restyle(r); }
 function cadHtml(r) {
+  if (r.p.source === 'osm') return `<span class="muted">OpenStreetMap section (reverse roadbook): no cadastre check.</span>`;
   if (!r.cad) return `<span class="muted">Checking the cadastre…</span>`;
   const pct = Math.round(r.cad.ratio * 100);
   const parcels = r.cad.parcels.slice(0, 4).map(p => esc(`${p.nom_com ? p.nom_com + ' ' : ''}${p.section || ''} ${p.numero || ''}`.trim() || p.idu || '?')).join(', ');
@@ -2172,6 +2173,7 @@ window.__acc = access; window.__rb = { buildRoadbook, tulipSVG, exportOpenRally,
 // (optional, needs the user's own Anthropic API key) or by hand, then rebuilds the route by
 // matching each box's distance and turn against the IGN BD TOPO road and track graph.
 const RR = {
+  src: 'ign',
   boxes: loadJSON('tb.rr.boxes') || [],
   start: null, startMarker: null, layer: L.layerGroup().addTo(map), picking: null,
   files: [], result: null, running: false,
@@ -2209,7 +2211,7 @@ const rrPanel = document.createElement('div');
 rrPanel.id = 'rr'; rrPanel.className = 'panel';
 rrPanel.innerHTML = `
   <h3>Reverse roadbook → GPX <button id="rrClose">✕</button></h3>
-  <div class="muted">Rebuild a route from a scanned tulip roadbook: each box's distance and turn is matched to the IGN road and track network from your start point.</div>
+  <div class="muted">Rebuild a route from a scanned tulip roadbook: each box's distance and turn is matched to the road and track network (IGN in France, OpenStreetMap elsewhere) from your start point.</div>
   <div class="step"><b>1. Scan</b> <span class="muted">(photos or PDF, pages in order)</span>
     <div class="row"><input type="file" id="rrFile" accept="image/*,application/pdf" multiple></div>
     <div id="rrScan"></div>
@@ -2226,6 +2228,7 @@ rrPanel.innerHTML = `
     <div class="row"><button id="rrStartBtn">◎ Pick start on map</button><span id="rrStartTxt" class="muted"></span></div>
     <div class="row">
       <select id="rrMode" title="Vehicle the roadbook was made for"><option value="vehicle">4x4 / motorbike</option><option value="bike">Bike / MTB</option><option value="walk">On foot</option></select>
+      <select id="rrSrc" title="Road and track data"><option value="auto">Map data: auto (IGN in France, else OSM)</option><option value="ign">IGN BD TOPO (France)</option><option value="osm">OpenStreetMap (anywhere)</option></select>
       <label class="muted" title="How far your trip meter may differ from the roadbook">± <input type="text" id="rrTol" value="10" style="width:32px;flex:none"> % distance</label>
     </div>
     <div class="row"><button id="rrRun" class="on" disabled>Rebuild route</button><button id="rrGpx" disabled>GPX</button><button id="rrPlan" disabled title="Open in the trip planner (roadbook PDF / OpenRally export)">To planner</button></div>
@@ -2466,7 +2469,7 @@ $rr('rrRead').onclick = async () => {
   finally { RR.running = false; rrUpdateButtons(); }
 };
 
-// ---------- 2. Matching the boxes on the IGN network ----------
+// ---------- 2. Matching the boxes on the IGN or OpenStreetMap network ----------
 // Beam search: a state is "standing at box i's junction, leaving towards neighbour `out`".
 // From a state, walk the graph for the box's partial distance (± tolerance), going straight at
 // junctions without a box (small penalty for any other choice), then score the junctions reached
@@ -2474,6 +2477,7 @@ $rr('rrRead').onclick = async () => {
 const RR_BEAM = 120, RR_MAXCAND = 400, RR_LOOK = 25;
 function rrAllowed(rec, mode) {
   if (!rec || rec.cls === 'motorway') return false;
+  if ((rec.p.source === 'osm') !== (RR.src === 'osm')) return false; // stay on one network
   const nat = norm(rec.p.nature);
   if (mode === 'vehicle' && (nat === 'sentier' || nat === 'escalier' || rec.cls === 'cycle')) return false;
   if (mode === 'bike' && nat === 'escalier') return false;
@@ -2487,12 +2491,66 @@ function rrBack(path, d) { // node about d metres back along a walk (array of no
   for (let k = path.length - 1; k > 0; k--) { acc += hav(graph.nodes[path[k]], graph.nodes[path[k - 1]]); if (acc >= d) return path[k - 1]; }
   return path[0];
 }
-function rrCellKey(ll) { return `${Math.floor(ll[0] / CELL)}_${Math.floor(ll[1] / CELL)}`; }
-function rrCellsAround(ll, missing) { // note unloaded data cells within ~400 m of a point
-  for (const dy of [-0.004, 0, 0.004]) for (const dx of [-0.006, 0, 0.006]) {
-    const p = [ll[0] + dy, ll[1] + dx], k = rrCellKey(p);
-    if (cells.get(k) !== 'done' && cells.get(k) !== 'error') { const i = Math.floor(p[0] / CELL), j = Math.floor(p[1] / CELL); missing.set(k, [i * CELL, j * CELL, (i + 1) * CELL, (j + 1) * CELL]); }
+// Data sources: IGN BD TOPO cells (the app's own loader) or OpenStreetMap ways from Overpass,
+// converted to BD TOPO-like features so the map, the planner and the roadbook export work on them too.
+const RR_OSM_CELL = 0.02, rrOsmState = new Map(); // key -> 'loading' | 'done' | 'error'
+const RR_SRC = {
+  ign: { name: 'IGN', size: () => CELL, state: k => cells.get(k), load: list => requestCells(list), batch: 48 },
+  osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => rrOsmState.get(k), load: list => Promise.all(list.map(([k, c]) => rrOsmLoad(k, c))), batch: 12 },
+};
+function rrCellsAround(ll, missing, src, r = 0.004) { // note unloaded data cells within ~r degrees of a point
+  const S = src.size();
+  for (const dy of [-r, 0, r]) for (const dx of [-r * 1.5, 0, r * 1.5]) {
+    const i = Math.floor((ll[0] + dy) / S), j = Math.floor((ll[1] + dx) / S), k = `${i}_${j}`;
+    if (src.state(k) == null) missing.set(k, [i * S, j * S, (i + 1) * S, (j + 1) * S]);
   }
+}
+const OSM_HW = { // highway=* -> [BD TOPO nature, importance]
+  motorway: ['Type autoroutier', 1], motorway_link: ['Bretelle', 1], trunk: ['Route à 2 chaussées', 1], trunk_link: ['Bretelle', 1],
+  primary: ['Route à 1 chaussée', 2], primary_link: ['Route à 1 chaussée', 2], secondary: ['Route à 1 chaussée', 3], secondary_link: ['Route à 1 chaussée', 3],
+  tertiary: ['Route à 1 chaussée', 4], tertiary_link: ['Route à 1 chaussée', 4], unclassified: ['Route à 1 chaussée', 5], residential: ['Route à 1 chaussée', 5],
+  living_street: ['Route à 1 chaussée', 5], road: ['Route à 1 chaussée', 5], service: ['Route à 1 chaussée', 5],
+  track: ['Chemin', 6], path: ['Sentier', 6], footway: ['Sentier', 6], bridleway: ['Sentier', 6], pedestrian: ['Sentier', 6], steps: ['Escalier', 6], cycleway: ['Piste cyclable', 6],
+};
+function rrOsmFeature(el) {
+  const t = el.tags || {}; const hw = OSM_HW[t.highway];
+  if (!hw || !el.geometry || el.geometry.length < 2 || t.area === 'yes') return null;
+  let [nature, imp] = hw;
+  if (t.highway === 'track' && t.tracktype === 'grade1') nature = 'Route empierrée';
+  const restricted = t.access === 'private' || t.access === 'no';
+  return { type: 'Feature', id: 'osm' + el.id, geometry: { type: 'LineString', coordinates: el.geometry.map(g => [g.lon, g.lat]) },
+    properties: { cleabs: 'osm' + el.id, source: 'osm', osm_id: 'way/' + el.id, nature, importance: String(imp), etat_de_l_objet: 'En service', prive: restricted ? 'true' : 'false',
+      nom_collaboratif_gauche: t.name || '', cpx_numero: t.ref || '', osm_highway: t.highway, osm_surface: t.surface || '', osm_tracktype: t.tracktype || '',
+      osm_access: [t.access, t.motor_vehicle && 'motor_vehicle=' + t.motor_vehicle].filter(Boolean).join(' ') } };
+}
+function rrOsmLoad(key, c) {
+  if (rrOsmState.get(key) === 'done') return Promise.resolve();
+  rrOsmState.set(key, 'loading');
+  const [s, w, n, e] = c.map(v => v.toFixed(5));
+  const q = `[out:json][timeout:60];way["highway"](${s},${w},${n},${e});out tags geom;`;
+  const run = async () => {
+    let lastErr;
+    for (const url of OVERPASS) {
+      try {
+        const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
+        const j = await r.json();
+        addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
+        rrOsmState.set(key, 'done'); return;
+      } catch (err) { lastErr = err; }
+    }
+    rrOsmState.set(key, 'error'); throw lastErr;
+  };
+  const pr = overpassBusy.then(run, run); // one Overpass request at a time, shared with the access check (fair use)
+  overpassBusy = pr.catch(() => {});
+  return pr.catch(() => {});
+}
+function rrHasData(src, ll, radius) { // any usable section of this source within radius metres?
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const n = graph.nodes[i]; if (Math.abs(n[0] - ll[0]) > 0.02 || Math.abs(n[1] - ll[1]) > 0.03) continue;
+    if (hav(n, ll) < radius && graph.adj[i].some(e => (e.rec.p.source === 'osm') === (src === 'osm'))) return true;
+  }
+  return false;
 }
 function rrExits(v, prev, inB, mode, allowU) { // exits from junction v: [{n, e, outB, rel}]
   const out = [];
@@ -2518,7 +2576,7 @@ function rrWalks(st, lo, hi, mode, finish, missing, anyNode) {
   while (stack.length && ends.length < RR_MAXCAND && guard++ < 60000) {
     const w = stack.pop();
     const here = graph.nodes[w.cur];
-    rrCellsAround(here, missing);
+    rrCellsAround(here, missing, RR_SRC[RR.src]);
     const nb = rrNb(w.cur, mode); nb.delete(w.prev);
     const isJ = neighbours(w.cur).size >= 3; // a junction on the ground, even if the side branch is a footpath
     if (w.acc >= lo && w.acc <= hi && (isJ || anyNode || nb.size === 0)) {
@@ -2575,16 +2633,25 @@ function rrStartStates(box, mode) {
 async function rrMatch(onProgress) {
   const mode = $rr('rrMode').value, tol = Math.max(0.02, Math.min(0.4, (rrNum($rr('rrTol').value) || 10) / 100));
   const boxes = RR.boxes;
-  // data around the start
-  await requestCells(cellsFor(L.latLngBounds([RR.start]).pad(0).extend(L.latLng(RR.start.lat + 0.01, RR.start.lng + 0.014)).extend(L.latLng(RR.start.lat - 0.01, RR.start.lng - 0.014))));
+  // pick the data source, then load the data around the start
+  const want = $rr('rrSrc').value, st0 = [RR.start.lat, RR.start.lng];
+  const startCells = src => { const m = new Map(); rrCellsAround(st0, m, src, 0.008); return [...m]; };
+  RR.src = want === 'osm' ? 'osm' : 'ign';
+  if (RR.src === 'ign') {
+    onProgress('Loading IGN data around the start…');
+    await requestCells(startCells(RR_SRC.ign));
+    if (want === 'auto' && !rrHasData('ign', st0, 1500)) RR.src = 'osm'; // outside France: IGN has nothing here
+  }
+  if (RR.src === 'osm') { onProgress('Loading OpenStreetMap data around the start…'); await RR_SRC.osm.load(startCells(RR_SRC.osm)); }
+  const src = RR_SRC[RR.src];
   let beam = rrStartStates(boxes[0], mode);
-  if (!beam.length) throw new Error('No usable road or track near the start point. Zoom in and check that IGN data loads there.');
+  if (!beam.length) throw new Error(`No usable road or track near the start point in the ${src.name} data${RR.src === 'osm' ? ' (or the OpenStreetMap server did not answer: try again in a minute)' : ''}.`);
   for (let i = 1; i < boxes.length; i++) {
     const box = boxes[i], finish = i === boxes.length - 1;
     if (box.km == null) { beam.forEach(s => s.hist.push({ i, skipped: true, cost: 0, ll: null })); continue; }
     onProgress(`Matching box ${i + 1} of ${boxes.length}…`);
     let children;
-    for (let round = 0; round < 5; round++) {
+    for (let round = 0; round < (RR.src === 'osm' ? 10 : 5); round++) {
       const missing = new Map(); children = [];
       for (const st of beam) {
         const P = (box.km - st.lastKm) * 1000 * st.k;
@@ -2621,11 +2688,11 @@ async function rrMatch(onProgress) {
         // skipping this box (misread, or a junction missing from IGN) is allowed at a price
         children.push({ ...st, score: st.score + 7, hist: st.hist.concat({ i, skipped: true, cost: 7, ll: null }) });
       }
-      // load missing IGN cells the walks ran into, then redo this box
-      const need = [...missing].filter(([k]) => !cells.has(k)).slice(0, 48);
+      // load the missing data cells the walks ran into, then redo this box
+      const need = [...missing].filter(([k]) => src.state(k) == null).slice(0, src.batch);
       if (!need.length) break;
-      onProgress(`Loading IGN data around box ${i + 1}… (${need.length} areas)`);
-      await requestCells(need);
+      onProgress(`Loading ${src.name} data around box ${i + 1}… (${need.length} area${need.length > 1 ? 's' : ''})`);
+      await src.load(need);
     }
     // keep the best state per (junction, exit)
     const best = new Map();
@@ -2668,7 +2735,7 @@ function rrShow(best, secs) {
   const total = legs.reduce((s, e) => s + e.len, 0);
   const res = RR.boxes.map((b, i) => {
     const h = best.hist.find(x => x.i === i);
-    if (!h || h.skipped) return { status: 'bad', msg: 'Not found on the IGN network: check this box (distance, arrow) or pin it on the map.', ll: null };
+    if (!h || h.skipped) return { status: 'bad', msg: 'Not found on the road network: check this box (distance, arrow) or pin it on the map.', ll: null };
     const dE = Math.abs(h.dErr || 0), aE = h.angErr == null ? 0 : Math.abs(h.angErr);
     const status = h.cost > 3 || dE > 250 || aE > 50 ? 'warn' : 'ok';
     return { status, ll: h.ll, msg: `${status === 'ok' ? 'Matched' : 'Doubtful match'}: distance off by ${Math.round(h.dErr || 0)} m${h.angErr != null ? `, arrow off by ${Math.round(h.angErr)}°` : ''}.` };
@@ -2680,7 +2747,7 @@ function rrShow(best, secs) {
   if (coords.length) map.fitBounds(L.latLngBounds(coords), { paddingTopLeft: [window.innerWidth > 600 ? rrPanel.offsetWidth + 70 : 20, 20], paddingBottomRight: [20, 20] });
   const bad = res.filter(r => r.status === 'bad').length, warn = res.filter(r => r.status === 'warn').length;
   const last = RR.boxes[RR.boxes.length - 1].km;
-  $rr('rrStatus').innerHTML = `Route rebuilt: <b>${fmtKm(total)}</b> on the IGN network for ${last != null ? last.toFixed(2) + ' km' : '?'} in the roadbook (trip meter factor ${best.k.toFixed(3)}), ${secs.toFixed(1)} s.` +
+  $rr('rrStatus').innerHTML = `Route rebuilt: <b>${fmtKm(total)}</b> on the ${RR.src === 'osm' ? 'OpenStreetMap (© OpenStreetMap contributors)' : 'IGN'} network for ${last != null ? last.toFixed(2) + ' km' : '?'} in the roadbook (trip meter factor ${best.k.toFixed(3)}), ${secs.toFixed(1)} s.` +
     (bad || warn ? `<br><span style="color:#d33">${bad ? `${bad} box${bad > 1 ? 'es' : ''} not found` : ''}${bad && warn ? ', ' : ''}${warn ? `${warn} doubtful` : ''}</span>: they are highlighted in the table. Fix the value, or pin the box on the map (📍), and rebuild.` : ' Every box matched.');
   rrRender();
 }
