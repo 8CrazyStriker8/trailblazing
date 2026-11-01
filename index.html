@@ -703,6 +703,10 @@ svg.leaflet-image-layer.leaflet-interactive path {
   .rsItem { padding:6px 4px; border-bottom:1px solid #f0f0f0; font-size:13px; cursor:pointer; }
   .rsItem.lvl-ban { border-left:4px solid #d33; } .rsItem.lvl-warn { border-left:4px solid #f59f00; } .rsItem.lvl-info { border-left:4px solid #9ab; }
   .rsLinks { margin-top:2px; font-size:12px; }
+  .rsPin { width:24px; height:24px; border-radius:50% 50% 50% 0; transform:rotate(-45deg); color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.5); box-sizing:border-box; }
+  .rsPin span { transform:rotate(45deg); line-height:1; }
+  @keyframes rsflash { from { background:#ffe08a; } to { background:transparent; } }
+  .rsItem.flash { animation: rsflash 2s ease-out; }
   #rbList { flex:1; overflow:auto; margin:6px 0; border-top:1px solid #eee; border-bottom:1px solid #eee; }
   .rbHead { display:flex; align-items:center; gap:8px; }
   .rbCard { display:grid; grid-template-columns:56px 52px 1fr; gap:6px; align-items:center; padding:4px 2px; border-bottom:1px solid #f0f0f0; cursor:pointer; }
@@ -1608,7 +1612,7 @@ function corridorCells(wps, widen = 1) { // grid cells covering a band around ea
 }
 async function recompute() {
   const seq = ++routeSeq; const stats = document.getElementById('stats');
-  routeLayer.clearLayers(); lastRoute = null; lastLegs = null; rsSeq++; setRsSummary(''); ['gpxBtn', 'rbPdfBtn'].forEach(id => document.getElementById(id).disabled = true);
+  routeLayer.clearLayers(); lastRoute = null; lastLegs = null; rsSeq++; setRsSummary(''); rsPins.clearLayers(); ['gpxBtn', 'rbPdfBtn'].forEach(id => document.getElementById(id).disabled = true);
   if (waypoints.length < 2) { stats.textContent = waypoints.length ? 'Add another point.' : ''; return; }
   const prof = profile(); let legs, gap, fail;
   for (const widen of [1, 2.5]) {
@@ -2135,6 +2139,7 @@ document.getElementById('rbOdo').onclick = () => { spot.follow = true; if (spot.
 
 // ---------- Restrictions along the computed route ----------
 let rsSeq = 0, rsItems = [], rsCommunes = [], rsReroutedKey = null, rsHighlight = null;
+const rsPins = L.layerGroup().addTo(map);
 const geoportail = (lat, lng, cad) => `https://www.geoportail.gouv.fr/carte?c=${lng.toFixed(6)},${lat.toFixed(6)}&z=18&l0=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2::GEOPORTAIL:OGC:WMTS(1)${cad ? '&l1=CADASTRALPARCELS.PARCELLAIRE_EXPRESS::GEOPORTAIL:OGC:WMTS(1)' : ''}&permalink=yes`;
 const LEVEL_ICON = { ban: '⛔', warn: '⚠️', info: 'ℹ️' };
 function routeSegments(legs) { // consecutive edges on the same IGN section
@@ -2170,7 +2175,8 @@ async function routeRestrictions(legs) {
         if (/^Barrier/.test(x.text)) for (const b of r.barriers || []) links.push([`OSM node ${b.id}`, `https://www.openstreetmap.org/node/${b.id}`]);
         if (/^IGN/.test(x.text)) links.push(['Géoportail', geoportail(mid[0], mid[1], false)]);
         for (const z of r.zones || []) if (x.text.startsWith(z.label)) links.push(['Géoportail', geoportail(mid[0], mid[1], false)], ['INPN search', `https://inpn.mnhn.fr/accueil/recherche-de-donnees?keyword=${encodeURIComponent(z.name || z.label)}`]);
-        items.push({ ...where, level: x.level, kind: /^Barrier/.test(x.text) ? 'Barrier' : /^OpenStreetMap/.test(x.text) ? 'Access' : /^IGN/.test(x.text) ? 'Access' : 'Protected area', text: x.text.replace(/^OpenStreetMap: /, ''), links });
+        const bar = /^Barrier/.test(x.text) && (r.barriers || [])[0];
+        items.push({ ...where, pin: bar ? bar.ll : null, level: x.level, kind: /^Barrier/.test(x.text) ? 'Barrier' : /^OpenStreetMap/.test(x.text) ? 'Access' : /^IGN/.test(x.text) ? 'Access' : 'Protected area', text: x.text.replace(/^OpenStreetMap: /, ''), links });
       }
     }
     if (r.cad && r.cad.verdict !== 'public') {
@@ -2230,6 +2236,16 @@ function renderRestrictions() {
   const deps = [...new Set(rsCommunes.map(c => c.departement ? c.departement.nom : c.codeDepartement))].filter(Boolean);
   if (deps.length) h += `<div class="rsItem"><b>Prefecture orders</b> (seasonal fire-risk closures, natural areas)<div class="rsLinks">${deps.map(d => `<a href="https://www.google.com/search?q=${encodeURIComponent('arrêté préfectoral ' + d + ' circulation véhicules à moteur massifs forestiers')}" target="_blank" rel="noopener">${esc(d)}</a>`).join(' · ')}</div></div>`;
   list.innerHTML = h;
+  // warning pins on the map, linked to the list
+  rsPins.clearLayers();
+  rsItems.forEach((it, k) => {
+    const at = it.pin || it.coords[0];
+    const color = { ban: '#d33', warn: '#f59f00', info: '#5b7fa6' }[it.level];
+    L.marker(at, { zIndexOffset: 500, icon: L.divIcon({ className: '', html: `<div class="rsPin" style="background:${color}"><span>${it.level === 'info' ? 'i' : '!'}</span></div>`, iconSize: [24, 24], iconAnchor: [12, 24] }) })
+      .bindTooltip(`km ${it.km0.toFixed(1)} · ${esc(it.text)}`, { direction: 'top', offset: [0, -22] })
+      .on('click', () => rsShowItem(k))
+      .addTo(rsPins);
+  });
   list.querySelectorAll('.rsItem[data-k]').forEach(el => el.onclick = e => {
     if (e.target.tagName === 'A') return;
     const it = rsItems[+el.dataset.k];
@@ -2238,6 +2254,16 @@ function renderRestrictions() {
     map.fitBounds(L.latLngBounds(it.coords).pad(0.5), { maxZoom: 17 });
     setTimeout(() => { if (rsHighlight) { map.removeLayer(rsHighlight); rsHighlight = null; } }, 4000);
   });
+}
+function rsShowItem(k) {
+  document.getElementById('rsPanel').style.display = 'flex';
+  const el = document.querySelector(`.rsItem[data-k="${k}"]`); if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  const it = rsItems[k];
+  if (rsHighlight) map.removeLayer(rsHighlight);
+  rsHighlight = L.polyline(it.coords, { renderer, color: it.level === 'ban' ? '#d33' : '#f59f00', weight: 10, opacity: .7, interactive: false }).addTo(map);
+  setTimeout(() => { if (rsHighlight) { map.removeLayer(rsHighlight); rsHighlight = null; } }, 4000);
 }
 document.getElementById('rsClose').onclick = () => { document.getElementById('rsPanel').style.display = 'none'; };
 
