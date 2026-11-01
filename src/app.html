@@ -346,10 +346,11 @@ function onLineClick(ev, rec) {
     `<div class="verdict" style="color:${color}">${esc(label)}</div>` +
     `<div>${esc(p.nature || '')}${name ? ' – ' + esc(name) : ''} · ${fmtKm(len)}</div>` +
     (rec.cls === 'path' ? `<div id="cadBox" style="margin-top:6px">${cadHtml(rec)}</div>` : '') +
-    (ACC_CLASSES.includes(rec.cls) ? `<div id="accBox" style="margin-top:6px">${accHtml(rec)}</div>` : '') +
+    (ACC_CLASSES.includes(rec.cls) ? `<div id="accBox" style="margin-top:6px">${accHtml(rec)}</div><div id="localBox" style="margin-top:6px"><span class="muted">Looking up the commune…</span></div>` : '') +
     `<details><summary class="muted" style="cursor:pointer;margin-top:6px">All IGN attributes</summary><table>${rows}</table></details>`
   ).openOn(map);
   if (rec.cls === 'path' && !rec.cad) checkCadastre([rec]).then(() => { const b = document.getElementById('cadBox'); if (b) b.innerHTML = cadHtml(rec); });
+  if (ACC_CLASSES.includes(rec.cls)) localOrders(rec).then(h => { const b = document.getElementById('localBox'); if (b) b.innerHTML = h; });
   if (ACC_CLASSES.includes(rec.cls) && !rec.accDone) checkAccess([rec]).then(() => { const b = document.getElementById('accBox'); if (b) b.innerHTML = accHtml(rec); });
 }
 
@@ -724,6 +725,52 @@ document.getElementById('accCheck').addEventListener('change', e => {
   restyleAll();
 });
 { const v = loadJSON('tb.acc'); if (v === false) { document.getElementById('accCheck').checked = false; map.removeLayer(zoneLayer); } }
+
+// ---------- Local orders: commune(s) crossed + mairie contacts (Service-Public directory) ----------
+const communeCache = new Map(), mairieCache = new Map();
+function communeAt(pt) {
+  const k = pt[0].toFixed(3) + ',' + pt[1].toFixed(3);
+  if (!communeCache.has(k)) communeCache.set(k, fetchJSON(`https://geo.api.gouv.fr/communes?lat=${pt[0]}&lon=${pt[1]}&fields=nom,code,codeDepartement,departement`).then(a => a[0] || null).catch(() => null));
+  return communeCache.get(k);
+}
+function valuesOf(v) { // directory fields are JSON strings like [{"valeur": "..."}]
+  if (v == null) return [];
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch (e) { return [v]; } }
+  if (!Array.isArray(v)) v = [v];
+  return v.map(x => typeof x === 'string' ? x : (x && (x.valeur || x.value || x.url))).filter(Boolean);
+}
+function mairie(insee) {
+  if (!mairieCache.has(insee)) {
+    const where = encodeURIComponent(`code_insee_commune="${insee}" and nom like "Mairie"`);
+    mairieCache.set(insee, fetchJSON(`https://api-lannuaire.service-public.fr/api/explore/v2.1/catalog/datasets/api-lannuaire-administration/records?where=${where}&limit=10`)
+      .then(j => {
+        const rs = (j.results || []).filter(r => /^mairie/i.test(r.nom || ''));
+        const r = rs.find(r => !/d[ée]l[ée]gu[ée]e|annexe/i.test(r.nom)) || rs[0];
+        if (!r) return null;
+        return { nom: r.nom, site: valuesOf(r.site_internet).find(u => /^https?:/.test(u)), tel: valuesOf(r.telephone)[0], mail: valuesOf(r.adresse_courriel)[0], fiche: r.url_service_public };
+      }).catch(() => null));
+  }
+  return mairieCache.get(insee);
+}
+async function localOrders(rec) {
+  const ll = rec.ll, pts = [ll[0], ll[Math.floor(ll.length / 2)], ll[ll.length - 1]];
+  const cs = (await Promise.all(pts.map(communeAt))).filter(Boolean);
+  const uniq = [...new Map(cs.map(c => [c.code, c])).values()];
+  if (!uniq.length) return '<span class="muted">Commune lookup unavailable.</span>';
+  const parts = await Promise.all(uniq.map(async c => {
+    const m = await mairie(c.code);
+    const q = encodeURIComponent(`arrêté municipal circulation véhicules à moteur chemin "${c.nom}"`);
+    const qp = encodeURIComponent(`recueil des actes administratifs préfecture ${c.departement ? c.departement.nom : c.codeDepartement} circulation véhicules à moteur espaces naturels`);
+    const links = [];
+    if (m && m.site) links.push(`<a href="${esc(m.site)}" target="_blank" rel="noopener">mairie website</a>`);
+    if (m && m.fiche) links.push(`<a href="${esc(m.fiche)}" target="_blank" rel="noopener">Service-Public page</a>`);
+    links.push(`<a href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener">search the mayor's orders</a>`);
+    links.push(`<a href="https://www.google.com/search?q=${qp}" target="_blank" rel="noopener">prefecture orders</a>`);
+    const contact = m ? [m.tel ? `<a href="tel:${esc(m.tel.replace(/\s/g, ''))}">${esc(m.tel)}</a>` : '', m.mail ? esc(m.mail) : ''].filter(Boolean).join(' · ') : '';
+    return `<div><b>${esc(c.nom)}</b> (${esc(c.codeDepartement || '')})${contact ? '<br>' + contact : ''}<br>${links.join(' · ')}</div>`;
+  }));
+  return `<div class="muted" style="margin-bottom:2px">Local orders (arrêtés): not online in a standard form. Check with:</div>` + parts.join('');
+}
 
 // ---------- Routing graph (built from every vertex of loaded sections) ----------
 const graph = {
