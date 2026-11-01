@@ -37,7 +37,22 @@
   .verdict { font-weight:600; }
   #help { top:70px; left:54px; right:58px; max-width:520px; padding:12px 14px; display:none; max-height:70%; overflow:auto; }
   #help p { margin:6px 0; }
+  #rbPanel { top:70px; right:10px; bottom:24px; width:340px; padding:10px 12px; display:none; flex-direction:column; }
+  #rbList { flex:1; overflow:auto; margin:6px 0; border-top:1px solid #eee; border-bottom:1px solid #eee; }
+  .rbHead { display:flex; align-items:center; gap:8px; }
+  .rbCard { display:grid; grid-template-columns:56px 52px 1fr; gap:6px; align-items:center; padding:4px 2px; border-bottom:1px solid #f0f0f0; cursor:pointer; }
+  .rbCard.sel, .rbCard:hover { background:#fff4ec; }
+  .rbD { text-align:right; font-size:13px; }
+  .rbN { font-size:12px; }
+  .rbPin { background:#e8590c; color:#fff; border:2px solid #fff; border-radius:4px; width:20px; height:20px; line-height:20px; text-align:center; font-size:11px; font-weight:700; box-shadow:0 1px 3px rgba(0,0,0,.4); }
+  #rbEdit { top:70px; right:10px; bottom:24px; width:340px; padding:10px 12px; display:none; overflow:auto; z-index:1001; }
+  #rbEdit .lbl { display:inline-flex; align-items:center; gap:4px; margin:3px 6px 3px 0; font-size:13px; }
+  #rbEdit .row { display:flex; gap:4px; flex-wrap:wrap; margin-top:4px; align-items:center; }
+  .qturn button { padding:5px 6px; font-size:12px; }
+  .filebtn { font:inherit; padding:7px 10px; border:1px solid #cdd2da; border-radius:7px; background:#f6f7f9; cursor:pointer; }
+  #rbPanel .row { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
   @media (max-width:600px) {
+    #rbPanel, #rbEdit { left:0; right:0; top:auto; bottom:0; width:auto; height:58%; border-radius:12px 12px 0 0; }
     #legend { width:auto; right:10px; bottom:auto; top:118px; max-height:40%; display:none; }
     #legend.open { display:block; }
     #plan { left:10px; width:auto; }
@@ -53,6 +68,7 @@
   <input id="q" type="search" placeholder="Search a place or address…" autocomplete="off">
   <button id="locBtn" title="Show my position">◎ Me</button>
   <button id="planBtn" title="Click on the map to add route points">✎ Plan</button>
+  <button id="rbBtn" title="Roadbook editor and GPS spotting">📒</button>
   <button id="legendBtn">Layers</button>
   <button id="helpBtn" title="How it works">?</button>
   <div id="results"></div>
@@ -126,10 +142,19 @@
     <button id="gpxBtn" disabled>GPX</button>
   </div>
   <div class="row">
-    <button id="rbPdfBtn" disabled title="Printable roadbook with tulip diagrams">Roadbook PDF</button>
-    <button id="rbOrBtn" disabled title="OpenRally GPX roadbook for rally apps and devices">OpenRally</button>
+    <button id="rbPdfBtn" disabled title="Build an editable tulip roadbook from this route">📒 Make roadbook</button>
   </div>
 </div>
+
+<div id="rbPanel" class="panel">
+  <div class="rbHead"><b>Roadbook</b> <span id="rbSum" class="muted"></span><button id="rbClose" style="margin-left:auto">✕</button></div>
+  <div class="row"><button id="rbSpot">● Start spotting</button><button id="rbAdd" style="display:none;flex:1;font-weight:700;background:#e8590c;color:#fff;border-color:#e8590c">+ Box</button></div>
+  <div id="rbOdo" class="muted" style="cursor:pointer"></div>
+  <div id="rbList"></div>
+  <div class="row"><button id="rbFromRoute">From route</button><label class="filebtn"><span>Open file…</span><input type="file" id="rbOpenFile" accept=".gpx,.xml,application/gpx+xml" hidden></label><button id="rbNew">New</button></div>
+  <div class="row"><button id="rbPdf">⬇ PDF</button><button id="rbOr">⬇ OpenRally</button></div>
+</div>
+<div id="rbEdit" class="panel"></div>
 
 <script>/*LEAFLET_JS*/</script>
 <script>
@@ -137,9 +162,9 @@
 // ---------- Config ----------
 const GEOPF = 'https://data.geopf.fr';
 const MIN_DATA_ZOOM = 14;
-const CELL = 0.015;            // data grid cell size in degrees
+const CELL = 0.04;             // data grid cell size in degrees (~4.4 x 3 km)
 const PAGE = 5000;             // WFS page size
-const MAX_PARALLEL = 4;
+const MAX_PARALLEL = 6;
 
 // ---------- Map ----------
 const wmts = (layer, fmt) => `${GEOPF}/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer}&STYLE=normal&TILEMATRIXSET=PM&FORMAT=${fmt}&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}`;
@@ -889,28 +914,48 @@ profileL.onchange = () => { profileSel.value = profileL.value; profileSel.onchan
 profileSel.onchange = prefSel.onchange = () => { profileL.value = profileSel.value; saveJSON('tb.profile', profile()); restyleAll(); recompute(); };
 const profile = () => ({ mode: profileSel.value, pref: prefSel.value });
 
+const MAX_TRIP_CELLS = 600;
+function corridorCells(wps, widen = 1) { // grid cells covering a band around each leg
+  const out = new Map();
+  for (let i = 1; i < wps.length; i++) {
+    const a = [wps[i - 1].lat, wps[i - 1].lng], b = [wps[i].lat, wps[i].lng], len = hav(a, b);
+    const buf = Math.min(8000, Math.max(1500, 0.15 * len)) * widen;
+    const dLat = buf / 110540, dLng = buf / (111320 * Math.cos(a[0] * Math.PI / 180));
+    const steps = Math.max(1, Math.ceil(len / 1000));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps, p = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+      for (const c of cellsFor(L.latLngBounds([p[0] - dLat, p[1] - dLng], [p[0] + dLat, p[1] + dLng]))) out.set(c[0], c);
+    }
+  }
+  return [...out.values()];
+}
 async function recompute() {
   const seq = ++routeSeq; const stats = document.getElementById('stats');
-  routeLayer.clearLayers(); lastRoute = null; lastLegs = null; ['gpxBtn', 'rbPdfBtn', 'rbOrBtn'].forEach(id => document.getElementById(id).disabled = true);
+  routeLayer.clearLayers(); lastRoute = null; lastLegs = null; ['gpxBtn', 'rbPdfBtn'].forEach(id => document.getElementById(id).disabled = true);
   if (waypoints.length < 2) { stats.textContent = waypoints.length ? 'Add another point.' : ''; return; }
-  const b = L.latLngBounds(waypoints).pad(0.25);
-  const need = cellsFor(b);
-  if (need.length > 120) { stats.textContent = 'Points are too far apart for one trip; add points in between.'; return; }
-  stats.textContent = 'Loading IGN data along the trip…';
-  await requestCells(need);
-  if (seq !== routeSeq) return;
-  stats.textContent = 'Computing route…';
-  await new Promise(r => setTimeout(r, 0));
-  const prof = profile(); const legs = []; let gap = 0;
-  for (let i = 1; i < waypoints.length; i++) {
-    const a = graph.nearest(waypoints[i - 1], prof), z = graph.nearest(waypoints[i], prof);
-    if (!a || !z) { stats.textContent = 'No usable path near these points.'; return; }
-    gap = Math.max(gap, a.dist, z.dist);
-    const p = a.id === z.id ? [] : shortest(a.id, z.id, prof);
-    if (!p) { stats.textContent = `No route found between points ${i} and ${i + 1} for this mode.`; return; }
-    legs.push(p);
+  const prof = profile(); let legs, gap, fail;
+  for (const widen of [1, 2.5]) {
+    const need = corridorCells(waypoints, widen);
+    if (need.length > MAX_TRIP_CELLS) { stats.textContent = `This trip is too long to load at once (${need.length} areas). Split it into trips under ~150 km.`; return; }
+    let done = 0; const todo = need.filter(([k]) => cells.get(k) !== 'done').length;
+    stats.textContent = `Loading IGN data along the trip… (0/${todo})`;
+    await Promise.all(need.map(c => requestCells([c]).then(() => { done++; if (seq === routeSeq && todo) stats.textContent = `Loading IGN data along the trip… (${Math.min(done, todo)}/${todo})`; })));
+    if (seq !== routeSeq) return;
+    stats.textContent = 'Computing route…';
+    await new Promise(r => setTimeout(r, 0));
+    legs = []; gap = 0; fail = null;
+    for (let i = 1; i < waypoints.length; i++) {
+      const a = graph.nearest(waypoints[i - 1], prof), z = graph.nearest(waypoints[i], prof);
+      if (!a || !z) { fail = 'No usable path near these points.'; break; }
+      gap = Math.max(gap, a.dist, z.dist);
+      const p = a.id === z.id ? [] : shortest(a.id, z.id, prof);
+      if (!p) { fail = `No route found between points ${i} and ${i + 1} for this mode.`; break; }
+      legs.push(p);
+    }
+    if (!fail) break;
   }
   if (seq !== routeSeq) return;
+  if (fail) { stats.textContent = fail; return; }
   drawRoute(legs, gap);
 }
 function drawRoute(legs, gap) {
@@ -922,7 +967,7 @@ function drawRoute(legs, gap) {
   // halo + coloured segments
   L.polyline(coords, { renderer, color: '#fff', weight: 9, opacity: .9, interactive: false }).addTo(routeLayer);
   L.polyline(coords, { renderer, color: '#7b2fd0', weight: 5, opacity: .9, interactive: false }).addTo(routeLayer);
-  lastRoute = coords; lastLegs = legs; ['gpxBtn', 'rbPdfBtn', 'rbOrBtn'].forEach(id => document.getElementById(id).disabled = !coords.length);
+  lastRoute = coords; lastLegs = legs; ['gpxBtn', 'rbPdfBtn'].forEach(id => document.getElementById(id).disabled = !coords.length);
   const pct = k => total ? Math.round(100 * by[k] / total) : 0;
   const hours = total / ({ walk: 4200, bike: 12000, vehicle: 20000 }[profile().mode]);
   const t = `${Math.floor(hours)}h${String(Math.round((hours % 1) * 60)).padStart(2, '0')}`;
@@ -1120,8 +1165,7 @@ function loadScript(src) {
 }
 const MODE_TXT = { walk: 'on foot', bike: 'bike / MTB', vehicle: '4x4 / motorbike' };
 const pdfSafe = s => String(s).replace(/[–—]/g, '-').replace(/[’]/g, "'").replace(/[^\x20-\x7E -ÿ]/g, '');
-async function exportRoadbookPDF() {
-  const rb = buildRoadbook(lastLegs, profileMode()); if (!rb) return;
+async function exportRoadbookPDF(rb) {
   if (!window.jspdf) await loadScript('vendor/jspdf.umd.min.js');
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -1153,25 +1197,25 @@ async function exportRoadbookPDF() {
     let yy = y + 7;
     b.notes.forEach((t, i) => {
       doc.setFont('helvetica', i === 0 ? 'bold' : 'normal'); doc.setFontSize(i === 0 ? 12 : 9.5);
-      if (t.startsWith('! ')) doc.setTextColor('#c00');
+      if (t.startsWith('!')) doc.setTextColor('#c00');
       const lines = doc.splitTextToSize(pdfSafe(t), wN);
       for (const ln of lines) { if (yy < y + ROW - 7) doc.text(ln, xN, yy); yy += i === 0 ? 5.5 : 4.2; }
       doc.setTextColor('#000');
     });
+    if (b.danger) { doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor('#c00'); doc.text(DANGER_TXT[b.danger], M + W - 3, y + 8, { align: 'right' }); doc.setTextColor('#000'); }
     if (b.cap != null) { doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(`CAP ${String(b.cap).padStart(3, '0')}`, M + W - 3, y + ROW - 3, { align: 'right' }); }
   });
   downloadBlob(doc.output('blob'), `roadbook-${date}.pdf`);
 }
-function exportOpenRally() {
-  const rb = buildRoadbook(lastLegs, profileMode()); if (!rb) return;
+function exportOpenRally(rb) {
   const xmlEsc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const wpts = rb.boxes.map(b => {
-    const notes = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">${b.notes.map((t, i) => `<text x="4" y="${18 + i * 18}" font-family="sans-serif" font-size="${i ? 13 : 16}"${i ? '' : ' font-weight="bold"'}${t.startsWith('! ') ? ' fill="#c00"' : ''}>${xmlEsc(t)}</text>`).join('')}</svg>`;
+    const notes = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">${b.notes.map((t, i) => `<text x="4" y="${18 + i * 18}" font-family="sans-serif" font-size="${i ? 13 : 16}"${i ? '' : ' font-weight="bold"'}${t.startsWith('!') ? ' fill="#c00"' : ''}>${xmlEsc(t)}</text>`).join('')}</svg>`;
     return `  <wpt lat="${b.lat.toFixed(7)}" lon="${b.lng.toFixed(7)}">
     <name>${b.n}</name>
     <extensions>
       <openrally:distance>${(b.dist / 1000).toFixed(3)}</openrally:distance>
-${b.kind === 'start' ? '      <openrally:dss/>\n' : ''}${b.kind === 'finish' ? '      <openrally:ass/>\n' : ''}${b.cap != null ? `      <openrally:cap>${b.cap}</openrally:cap>\n` : ''}      <openrally:tulip><![CDATA[${tulipSVG(b)}]]></openrally:tulip>
+${b.kind === 'start' ? '      <openrally:dss/>\n' : ''}${b.kind === 'finish' ? '      <openrally:ass/>\n' : ''}${b.cap != null ? `      <openrally:cap>${b.cap}</openrally:cap>\n` : ''}${b.danger ? `      <openrally:danger>${b.danger}</openrally:danger>\n` : ''}      <openrally:tulip><![CDATA[${tulipSVG(b).replace('<svg ', `<svg data-tb="${xmlEsc(JSON.stringify({ kind: b.kind, rel: b.rel, inB: b.inB ?? null, inSurf: b.inSurf, outSurf: b.outSurf, branches: b.branches }))}" `)}]]></openrally:tulip>
       <openrally:notes><![CDATA[${notes}]]></openrally:notes>
     </extensions>
   </wpt>`;
@@ -1181,7 +1225,7 @@ ${b.kind === 'start' ? '      <openrally:dss/>\n' : ''}${b.kind === 'finish' ? '
 <gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.1" creator="TrailBlazing"
   xmlns:openrally="http://www.openrally.org/xmlschemas/GpxExtensions/v1.0.3">
   <metadata>
-    <name>TrailBlazing roadbook</name>
+    <name>${xmlEsc(rb.name || 'TrailBlazing roadbook')}</name>
     <extensions>
       <openrally:units>metric</openrally:units>
       <openrally:distance>${(rb.total / 1000).toFixed(3)}</openrally:distance>
@@ -1199,8 +1243,217 @@ function downloadBlob(blob, name) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
-document.getElementById('rbPdfBtn').onclick = () => exportRoadbookPDF().catch(e => alert('Roadbook export failed: ' + e.message));
-document.getElementById('rbOrBtn').onclick = () => exportOpenRally();
+document.getElementById('rbPdfBtn').onclick = () => { rbOpen(); document.getElementById('rbFromRoute').click(); };
+
+// ---------- Roadbook editor + GPS spotting ----------
+const SURFACES = ['road', 'track', 'path', 'cycle path'];
+let RB = loadJSON('tb.rb') || { name: 'TrailBlazing roadbook', boxes: [], track: [], odo: 0 };
+let rbSel = -1, rbMarkers = L.layerGroup();
+const spot = { on: false, watch: null, last: null, pending: null, wake: null, follow: true };
+function rbSave() { saveJSON('tb.rb', RB); }
+function rbSorted() { return RB.boxes.slice().sort((a, b) => a.dist - b.dist); }
+function rbNormalize() {
+  const boxes = rbSorted(); let prev = 0;
+  boxes.forEach((b, k) => { b.n = k + 1; b.partial = b.dist - prev; prev = b.dist; b.notes = b.notes || []; });
+  const total = Math.max(RB.odo || 0, boxes.length ? boxes[boxes.length - 1].dist : 0);
+  return { boxes, total, coords: RB.track || [], name: RB.name };
+}
+function rbFromBuild(built) {
+  return built.boxes.map(b => ({ kind: b.kind, lat: b.lat, lng: b.lng, dist: b.dist, rel: Math.round(b.rel), cap: b.cap, inB: b.inB,
+    branches: b.branches.map(x => ({ rel: Math.round(x.rel), surface: x.surface })), inSurf: b.inSurf, outSurf: b.outSurf, notes: b.notes.slice(), danger: 0 }));
+}
+const DANGER_TXT = ['', '!', '!!', '!!!'];
+
+// --- panel rendering
+function rbOpen() { document.getElementById('rbPanel').style.display = 'flex'; rbMarkers.addTo(map); rbRender(); }
+function rbClose() { document.getElementById('rbPanel').style.display = 'none'; document.getElementById('rbEdit').style.display = 'none'; map.removeLayer(rbMarkers); }
+function rbRender() {
+  const rb = rbNormalize();
+  document.getElementById('rbSum').textContent = `${rb.boxes.length} boxes · ${(rb.total / 1000).toFixed(2)} km`;
+  const list = document.getElementById('rbList'); list.innerHTML = '';
+  if (!rb.boxes.length) list.innerHTML = '<div class="muted" style="padding:8px">No boxes yet. Plan a route and tap <b>From route</b>, or tap <b>Start spotting</b> and add a box at each junction as you ride.</div>';
+  rb.boxes.forEach(b => {
+    const d = document.createElement('div'); d.className = 'rbCard' + (RB.boxes.indexOf(b) === rbSel ? ' sel' : '');
+    d.innerHTML = `<div class="rbT">${tulipSVG(b, 56)}</div><div class="rbD"><b>${(b.dist / 1000).toFixed(2)}</b><br><span class="muted">${(b.partial / 1000).toFixed(2)}</span></div>` +
+      `<div class="rbN"><span class="muted">#${b.n}</span> ${b.danger ? `<b style="color:#c00">${DANGER_TXT[b.danger]}</b> ` : ''}${esc(b.notes.join(' · ') || '')}${b.cap != null ? ` <span class="muted">CAP ${String(b.cap).padStart(3, '0')}</span>` : ''}${b.pending ? ' <i class="muted">(exit after 25 m…)</i>' : ''}</div>`;
+    d.onclick = () => rbEdit(RB.boxes.indexOf(b));
+    list.appendChild(d);
+  });
+  rbMarkers.clearLayers();
+  rb.boxes.forEach(b => L.marker([b.lat, b.lng], { icon: L.divIcon({ className: '', html: `<div class="rbPin">${b.n}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }) })
+    .on('click', () => rbEdit(RB.boxes.indexOf(b))).addTo(rbMarkers));
+  if (RB.track && RB.track.length > 1) L.polyline(RB.track, { renderer, color: '#e8590c', weight: 3, opacity: .8, interactive: false }).addTo(rbMarkers);
+  document.getElementById('rbOdo').textContent = spot.on ? `Odometer ${((RB.odo || 0) / 1000).toFixed(2)} km${spot.last ? ` · GPS ±${Math.round(spot.last.acc)} m` : ' · waiting for GPS…'}` : '';
+  rbSave();
+}
+
+// --- box editor
+function rbEdit(i) {
+  rbSel = i; const b = RB.boxes[i]; if (!b) return;
+  const ed = document.getElementById('rbEdit'); ed.style.display = 'block';
+  const surfSel = (id, v) => `<select id="${id}">${SURFACES.map(s => `<option${s === v ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
+  ed.innerHTML = `
+    <div class="rbHead"><b>Box ${rbNormalize().boxes.indexOf(b) + 1}</b>
+      <select id="eKind">${['start', 'junction', 'via', 'finish'].map(k => `<option${k === b.kind ? ' selected' : ''}>${k}</option>`).join('')}</select>
+      <button id="eDone" style="margin-left:auto">Done</button></div>
+    <div style="display:flex;gap:10px;align-items:flex-start;margin-top:6px">
+      <div id="ePrev" style="border:1px solid #ddd;border-radius:6px">${tulipSVG(b, 120)}</div>
+      <div style="flex:1">
+        <label class="lbl">Total km <input id="eDist" type="number" step="0.01" min="0" value="${(b.dist / 1000).toFixed(2)}" style="width:80px"></label>
+        <label class="lbl">CAP <input id="eCap" type="number" min="0" max="360" value="${b.cap ?? ''}" style="width:60px"></label>
+        <label class="lbl">Danger <select id="eDanger">${[0, 1, 2, 3].map(n => `<option value="${n}"${n === (b.danger || 0) ? ' selected' : ''}>${n ? DANGER_TXT[n] : 'none'}</option>`).join('')}</select></label>
+      </div>
+    </div>
+    <div class="lbl" style="margin-top:6px">Exit turn <b id="eRelV">${b.rel}°</b></div>
+    <input id="eRel" type="range" min="-180" max="180" step="5" value="${b.rel}" style="width:100%">
+    <div class="row qturn">${[[-135, 'Sharp L'], [-90, 'Left'], [-45, 'Bear L'], [0, 'Straight'], [45, 'Bear R'], [90, 'Right'], [135, 'Sharp R']].map(([a, t]) => `<button data-a="${a}">${t}</button>`).join('')}</div>
+    <div class="row"><label class="lbl">In ${surfSel('eIn', b.inSurf)}</label><label class="lbl">Out ${surfSel('eOut', b.outSurf)}</label></div>
+    <div class="lbl" style="margin-top:6px">Other branches</div>
+    <div id="eBr">${b.branches.map((x, k) => `<div class="row brrow"><input type="range" min="-180" max="180" step="5" value="${x.rel}" data-k="${k}" class="brA" style="flex:1"><span class="muted">${x.rel}°</span>${surfSel('eBs' + k, x.surface).replace('<select', `<select class="brS" data-k="${k}"`)}<button class="brX" data-k="${k}">✕</button></div>`).join('')}</div>
+    <div class="row"><button id="eAddBr">+ branch</button></div>
+    <div class="lbl" style="margin-top:6px">Notes (one per line, start a line with ! for a warning)</div>
+    <textarea id="eNotes" rows="3" style="width:100%;box-sizing:border-box;font:inherit">${esc(b.notes.join('\n'))}</textarea>
+    <div class="row"><button id="eAuto">Auto notes</button><button id="eGo">Show on map</button><button id="eDel" style="color:#c00;margin-left:auto">Delete box</button></div>`;
+  const upd = () => { document.getElementById('ePrev').innerHTML = tulipSVG(b, 120); rbRender(); };
+  const $ = id => document.getElementById(id);
+  $('eDone').onclick = () => { ed.style.display = 'none'; rbSel = -1; rbRender(); };
+  $('eKind').onchange = e => { b.kind = e.target.value; upd(); };
+  $('eDist').onchange = e => { b.dist = Math.max(0, parseFloat(e.target.value) || 0) * 1000; upd(); };
+  $('eCap').onchange = e => { const v = parseInt(e.target.value, 10); b.cap = isNaN(v) ? null : ((v % 360) + 360) % 360; upd(); };
+  $('eDanger').onchange = e => { b.danger = +e.target.value; upd(); };
+  $('eRel').oninput = e => { b.rel = +e.target.value; $('eRelV').textContent = b.rel + '°'; if (b.inB != null) b.cap = Math.round((b.inB + b.rel + 360) % 360); upd(); };
+  ed.querySelectorAll('.qturn button').forEach(btn => btn.onclick = () => { $('eRel').value = btn.dataset.a; $('eRel').oninput({ target: $('eRel') }); });
+  $('eIn').onchange = e => { b.inSurf = e.target.value; upd(); };
+  $('eOut').onchange = e => { b.outSurf = e.target.value; upd(); };
+  ed.querySelectorAll('.brA').forEach(r => r.oninput = () => { const x = b.branches[r.dataset.k]; x.rel = +r.value; r.nextElementSibling.textContent = x.rel + '°'; upd(); });
+  ed.querySelectorAll('.brS').forEach(s => s.onchange = () => { b.branches[s.dataset.k].surface = s.value; upd(); });
+  ed.querySelectorAll('.brX').forEach(x => x.onclick = () => { b.branches.splice(+x.dataset.k, 1); rbEdit(i); upd(); });
+  $('eAddBr').onclick = () => { b.branches.push({ rel: 90, surface: 'track' }); rbEdit(i); upd(); };
+  $('eNotes').oninput = e => { b.notes = e.target.value.split('\n').map(s => s.trim()).filter(Boolean); rbRender(); };
+  $('eAuto').onclick = () => { b.notes = [b.kind === 'start' ? 'START' : b.kind === 'finish' ? 'FINISH' : turnWord(b.rel)].concat(b.outSurf && b.outSurf !== b.inSurf ? [`on ${b.outSurf}`] : []); rbEdit(i); upd(); };
+  $('eGo').onclick = () => map.setView([b.lat, b.lng], Math.max(map.getZoom(), 17));
+  $('eDel').onclick = () => { RB.boxes.splice(i, 1); ed.style.display = 'none'; rbSel = -1; rbRender(); };
+}
+
+// --- GPS spotting
+function nearestNode(pt, maxM) {
+  let best = -1, bd = Infinity; const cosLat = Math.cos(pt[0] * Math.PI / 180);
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const n = graph.nodes[i], dy = n[0] - pt[0], dx = (n[1] - pt[1]) * cosLat, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best >= 0 && hav(pt, graph.nodes[best]) <= maxM ? best : -1;
+}
+function surfaceNear(pt) { // surface of the edge closest to pt (within ~50 m)
+  let best = null, bd = 40;
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const n = graph.nodes[i]; if (Math.abs(n[0] - pt[0]) > 0.0006 || Math.abs(n[1] - pt[1]) > 0.0009) continue;
+    for (const e of graph.adj[i]) { const d = distToLine(pt, [n, graph.nodes[e.to]]); if (d < bd) { bd = d; best = e; } }
+  }
+  return best ? surfaceOf(best.rec) : null;
+}
+function trackBack(d) { // point d metres back along the spotting track
+  const t = RB.track; let acc = 0;
+  for (let i = t.length - 1; i > 0; i--) { acc += hav(t[i], t[i - 1]); if (acc >= d) return t[i - 1]; }
+  return null;
+}
+function spotStart() {
+  if (!navigator.geolocation) return alert('Geolocation is not available in this browser.');
+  spot.on = true; spot.follow = true;
+  document.getElementById('rbSpot').textContent = '■ Stop spotting'; document.getElementById('rbSpot').classList.add('on');
+  document.getElementById('rbAdd').style.display = '';
+  try { navigator.wakeLock && navigator.wakeLock.request('screen').then(w => spot.wake = w).catch(() => {}); } catch (e) {}
+  spot.watch = navigator.geolocation.watchPosition(onSpotFix, err => { document.getElementById('rbOdo').textContent = 'GPS error: ' + err.message; }, { enableHighAccuracy: true, maximumAge: 2000 });
+  rbRender();
+}
+function spotStop() {
+  spot.on = false; if (spot.watch != null) navigator.geolocation.clearWatch(spot.watch); spot.watch = null;
+  try { spot.wake && spot.wake.release(); } catch (e) {} spot.wake = null;
+  document.getElementById('rbSpot').textContent = '● Start spotting'; document.getElementById('rbSpot').classList.remove('on');
+  document.getElementById('rbAdd').style.display = 'none';
+  rbRender();
+}
+function onSpotFix(pos) {
+  const p = [pos.coords.latitude, pos.coords.longitude], acc = pos.coords.accuracy;
+  spot.last = { p, acc };
+  if (acc <= 35) {
+    const t = RB.track; const last = t[t.length - 1];
+    if (!last) t.push(p);
+    else { const d = hav(last, p); if (d >= 5) { t.push(p); RB.odo = (RB.odo || 0) + d; } }
+  }
+  if (spot.follow) map.setView(p, Math.max(map.getZoom(), 16), { animate: false });
+  // finish the pending box once we are 25 m past it
+  const b = spot.pending;
+  if (b && (RB.odo || 0) - b.dist >= RB_LOOK) {
+    const outB = bearing([b.lat, b.lng], p);
+    b.rel = Math.round(b.inB != null ? relAngle(outB, b.inB) : 0); b.cap = Math.round(outB) % 360;
+    b.outSurf = surfaceNear(p) || b.outSurf;
+    b.branches = b.branches.filter(x => Math.abs(relAngle(x.rel, b.rel)) > 35); // the exit is not a side branch
+    if (b.autoNotes) b.notes = [b.kind === 'start' ? 'START' : turnWord(b.rel)].concat(b.outSurf !== b.inSurf ? [`on ${b.outSurf}`] : []);
+    b.pending = false; spot.pending = null;
+  }
+  rbRender();
+}
+function spotAddBox() {
+  if (!spot.last) return alert('Waiting for a GPS fix…');
+  const p = RB.track[RB.track.length - 1] || spot.last.p;
+  const back = trackBack(RB_LOOK);
+  const inB = back ? bearing(back, p) : null;
+  const n = nearestNode(p, 25);
+  const branches = [];
+  if (n >= 0 && inB != null) for (const [m] of neighbours(n)) {
+    const rel = relAngle(bearing(graph.nodes[n], walkBranch(n, m)), inB);
+    if (Math.abs(rel) > 145) continue; // where we came from
+    const e = neighbours(n).get(m); branches.push({ rel: Math.round(rel), surface: surfaceOf(e.rec) });
+  }
+  const prev = rbSorted().pop();
+  const box = { kind: RB.boxes.length ? 'junction' : 'start', lat: n >= 0 ? graph.nodes[n][0] : p[0], lng: n >= 0 ? graph.nodes[n][1] : p[1], dist: RB.odo || 0,
+    rel: 0, cap: null, inB, branches, inSurf: (prev && prev.outSurf) || surfaceNear(trackBack(15) || p) || 'track', outSurf: 'track', notes: [], danger: 0, pending: true, autoNotes: true };
+  if (spot.pending) spot.pending.pending = false;
+  RB.boxes.push(box); spot.pending = box; rbRender();
+  if (navigator.vibrate) navigator.vibrate(60);
+}
+
+// --- import OpenRally / TrailBlazing GPX
+function rbImport(text) {
+  const xml = new DOMParser().parseFromString(text, 'application/xml');
+  const ext = (el, name) => [...el.getElementsByTagName('*')].find(x => x.localName === name);
+  const boxes = [];
+  for (const w of xml.getElementsByTagName('wpt')) {
+    const dEl = ext(w, 'distance'); if (!dEl) continue;
+    const b = { kind: ext(w, 'dss') ? 'start' : ext(w, 'ass') ? 'finish' : 'junction', lat: +w.getAttribute('lat'), lng: +w.getAttribute('lon'), dist: parseFloat(dEl.textContent) * 1000,
+      rel: 0, cap: ext(w, 'cap') ? parseInt(ext(w, 'cap').textContent, 10) : null, inB: null, branches: [], inSurf: 'track', outSurf: 'track', notes: [], danger: ext(w, 'danger') ? parseInt(ext(w, 'danger').textContent, 10) || 0 : 0 };
+    const tul = ext(w, 'tulip'), m = tul && tul.textContent.match(/data-tb="([^"]*)"/);
+    if (m) { try { Object.assign(b, JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))); } catch (e) {} }
+    const nt = ext(w, 'notes');
+    if (nt) { const txt = [...nt.textContent.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)].map(x => x[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim()).filter(Boolean); b.notes = txt.length ? txt : (nt.textContent.trim() && !nt.textContent.includes('<') ? [nt.textContent.trim()] : []); }
+    boxes.push(b);
+  }
+  if (!boxes.length) throw new Error('No roadbook waypoints (openrally:distance) found in this file.');
+  const track = [...xml.getElementsByTagName('trkpt')].map(t => [+t.getAttribute('lat'), +t.getAttribute('lon')]);
+  const nm = xml.getElementsByTagName('name')[0];
+  RB = { name: nm ? nm.textContent : 'Imported roadbook', boxes, track, odo: Math.max(...boxes.map(b => b.dist)) };
+  rbRender();
+  const ll = boxes.map(b => [b.lat, b.lng]).filter(p => p[0] || p[1]); if (ll.length) map.fitBounds(L.latLngBounds(ll).pad(0.2));
+}
+
+// --- wiring
+document.getElementById('rbBtn').onclick = () => document.getElementById('rbPanel').style.display === 'flex' ? rbClose() : rbOpen();
+document.getElementById('rbClose').onclick = rbClose;
+document.getElementById('rbSpot').onclick = () => spot.on ? spotStop() : spotStart();
+document.getElementById('rbAdd').onclick = spotAddBox;
+document.getElementById('rbFromRoute').onclick = () => {
+  if (!lastLegs) return alert('Plan a route first (Plan button), then tap From route.');
+  if (RB.boxes.length && !confirm('Replace the current roadbook with one built from the planned route?')) return;
+  const built = buildRoadbook(lastLegs, profileMode()); if (!built) return;
+  RB = { name: 'TrailBlazing roadbook', boxes: rbFromBuild(built), track: built.coords, odo: built.total }; rbRender();
+};
+document.getElementById('rbNew').onclick = () => { if (RB.boxes.length && !confirm('Start a new, empty roadbook? The current one will be cleared.')) return; RB = { name: 'TrailBlazing roadbook', boxes: [], track: [], odo: 0 }; spot.pending = null; rbRender(); };
+document.getElementById('rbOpenFile').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(rbImport).catch(err => alert('Could not open this file: ' + err.message)); e.target.value = ''; };
+document.getElementById('rbPdf').onclick = () => { if (!RB.boxes.length) return; exportRoadbookPDF(rbNormalize()).catch(e => alert('Roadbook export failed: ' + e.message)); };
+document.getElementById('rbOr').onclick = () => { if (RB.boxes.length) exportOpenRally(rbNormalize()); };
+map.on('dragstart', () => { spot.follow = false; });
+document.getElementById('rbOdo').onclick = () => { spot.follow = true; if (spot.last) map.setView(spot.last.p); };
 
 // ---------- Geolocation ----------
 let me = null, meAcc = null, follow = false;
