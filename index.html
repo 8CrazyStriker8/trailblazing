@@ -769,6 +769,7 @@ svg.leaflet-image-layer.leaflet-interactive path {
   <label><input type="checkbox" data-cls="cycle" checked><span class="sw" style="border-color:var(--cycle)"></span>Cycle paths<span class="count" id="c-cycle"></span></label>
   <label><input type="checkbox" data-cls="small" checked><span class="sw" style="border-color:var(--small)"></span>Small local roads<span class="count" id="c-small"></span></label>
   <label><input type="checkbox" data-cls="road"><span class="sw" style="border-color:var(--road)"></span>Main roads<span class="count" id="c-road"></span></label>
+  <div class="muted" style="margin:2px 0 2px 33px"><span class="sw" style="border-color:#9aa3ad;border-top-width:2px;border-top-style:dotted;width:22px"></span> faded: not usable for your travel mode</div>
   <label><input type="checkbox" data-cls="restricted" checked><span class="sw" style="border-color:var(--restricted);border-top-style:dotted"></span>Private / restricted<span class="count" id="c-restricted"></span></label>
   <div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px">
     <label><input type="checkbox" id="cadCheck" checked> Check public / private with the cadastre</label>
@@ -977,6 +978,7 @@ function addFeatures(fs) {
       groups[cls].addLayer(line);
       counts[cls]++;
       graph.addLine(rec);
+      restyle(rec);
     }
   }
   updateCounts();
@@ -1159,8 +1161,17 @@ async function checkCadastre(recs) {
   setCadStatus(failed ? 'Cadastre data could not be loaded for part of the view.' : '');
 }
 function styleCad(r) { restyle(r); }
+function unsuitable(r, mode) { // the section itself cannot be used in this travel mode
+  const n = norm(r.p.nature);
+  if (r.cls === 'motorway') return mode !== 'vehicle';
+  if (mode === 'vehicle') return n === 'sentier' || n === 'escalier' || r.cls === 'cycle' || norm(r.p.acces_vehicule_leger).startsWith('physiquement');
+  if (mode === 'bike') return n === 'escalier';
+  return norm(r.p.acces_pieton).startsWith('physiquement');
+}
+const FADED = { color: '#9aa3ad', weight: 1.5, opacity: .45, dashArray: '2 4' };
 function restyle(r) {
   if (!r.line) return;
+  if (r.cls !== 'restricted' && unsuitable(r, profileMode())) { r.line.setStyle(FADED); return; }
   let st = Object.assign({ dashArray: null }, STYLE[r.cls]);
   if (r.cad && document.getElementById('cadCheck').checked)
     st = { public: { color: '#0b6b2a', weight: 5, dashArray: null }, mixed: { color: '#7cb342', weight: 4, dashArray: '8 5' }, private: { color: '#e8590c', weight: 4, dashArray: '6 5' } }[r.cad.verdict];
@@ -1172,7 +1183,7 @@ function restyle(r) {
   r.line.setStyle(st);
 }
 const profileMode = () => document.getElementById('profile').value;
-function restyleAll() { for (const arr of features.values()) for (const r of arr) if (r.cad || r.accDone) restyle(r); }
+function restyleAll() { for (const arr of features.values()) for (const r of arr) restyle(r); }
 function cadHtml(r) {
   if (r.p.source === 'osm') return `<span class="muted">OpenStreetMap section (reverse roadbook): no cadastre check.</span>`;
   if (!r.cad) return `<span class="muted">Checking the cadastre…</span>`;
