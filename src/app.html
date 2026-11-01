@@ -42,6 +42,7 @@
   .rsItem { padding:6px 4px; border-bottom:1px solid #f0f0f0; font-size:13px; cursor:pointer; }
   .rsItem.lvl-ban { border-left:4px solid #d33; } .rsItem.lvl-warn { border-left:4px solid #f59f00; } .rsItem.lvl-info { border-left:4px solid #9ab; }
   .rsLinks { margin-top:2px; font-size:12px; }
+  .bioPin { font-size:14px; width:20px; height:20px; line-height:20px; text-align:center; background:#e3f4f6; border:1px solid #0b7285; border-radius:50%; }
   .rsPin { width:24px; height:24px; border-radius:50% 50% 50% 0; transform:rotate(-45deg); color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.5); box-sizing:border-box; }
   .rsPin span { transform:rotate(45deg); line-height:1; }
   @keyframes rsflash { from { background:#ffe08a; } to { background:transparent; } }
@@ -123,6 +124,7 @@
       <div><span class="sw" style="border-color:var(--restricted);border-top-style:dotted"></span> closed to your travel mode</div>
       <div><span class="sw" style="border-color:#b8860b;border-top-style:dashed"></span> warning (gate, seasonal rule…)</div>
       <div><span style="display:inline-block;width:22px;height:10px;background:rgba(128,0,160,.15);border:1px solid #8000a0;vertical-align:middle"></span> protected area / public forest</div>
+      <div><span style="display:inline-block;width:22px;height:10px;background:rgba(11,114,133,.25);border:2px solid #0b7285;vertical-align:middle"></span> wildlife quiet zone active on your trip date (dashed: other months)</div>
       <div id="accStatus"></div>
     </div>
     <label><input type="checkbox" id="cadastre"> Show cadastre parcels</label>
@@ -143,6 +145,7 @@
       <option value="prefer">Prefer paths</option>
       <option value="strict">Paths as much as possible</option>
     </select>
+    <label class="muted" style="display:flex;align-items:center;gap:4px">Trip date <input type="date" id="tripDate" style="font:inherit;padding:5px"></label>
   </div>
   <div id="stats" class="muted"></div>
   <div id="rsSummary" style="margin-top:4px"></div>
@@ -633,17 +636,70 @@ function zoneCell(i, j) {
       }
       srcState.zones[z.kind] = 'fail';
       return [];
-    })).then(lists => lists.flat());
+    }).concat([bioZones(c)])).then(lists => lists.flat());
     zoneCells.set(key, pr);
   }
   return zoneCells.get(key);
+}
+// --- Seasonal: Biodiv'Sports wildlife sensitive areas (months of sensitivity), trip date
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function tripDate() { const v = document.getElementById('tripDate').value; const d = v ? new Date(v + 'T12:00:00') : new Date(); return isNaN(d) ? new Date() : d; }
+const tripMonth = () => tripDate().getMonth(); // 0..11
+function monthsText(period) { // [12 booleans] -> "Mar–Jul"
+  const out = []; let i = 0;
+  while (i < 12) { if (!period[i]) { i++; continue; } let j = i; while (j + 1 < 12 && period[j + 1]) j++; out.push(i === j ? MONTHS[i] : `${MONTHS[i]}–${MONTHS[j]}`); i = j + 1; }
+  return out.length === 12 || period.every(Boolean) ? 'all year' : out.join(', ');
+}
+const zoneActive = z => z.kind !== 'bio' || !z.period || !!z.period[tripMonth()];
+async function bioZones(c) { // c = [s, w, n, e]
+  const out = [];
+  let url = `https://biodiv-sports.fr/api/v2/sensitivearea/?format=geojson&language=en&practices=1&in_bbox=${c[1]},${c[0]},${c[3]},${c[2]}`;
+  try {
+    for (let page = 0; url && page < 10; page++) {
+      const fc = await fetchJSON(url);
+      for (const f of fc.features || []) {
+        const g = f.geometry; if (!g) continue;
+        const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+        const rings = []; for (const poly of polys) for (const r of poly) rings.push(r.map(([x, y]) => [y, x]));
+        if (!rings.length) continue;
+        let s = 90, w = 180, n = -90, e = -180;
+        for (const r of rings) for (const [la, lo] of r) { if (la < s) s = la; if (la > n) n = la; if (lo < w) w = lo; if (lo > e) e = lo; }
+        const p = f.properties || {};
+        const name = typeof p.name === 'object' && p.name ? (p.name.en || p.name.fr || Object.values(p.name).find(Boolean)) : p.name;
+        out.push({ kind: 'bio', label: p.species_id == null ? 'Regulated wildlife area' : 'Wildlife quiet zone', name: name || '', id: 'bio' + (f.id ?? p.id),
+          period: Array.isArray(p.period) && p.period.length === 12 ? p.period : null, url: p.info_url || p.url || '', structure: p.structure || '', regulatory: p.species_id == null, rings, s, w, n, e });
+      }
+      url = fc.next || null;
+    }
+    srcState.zones.bio = 'ok';
+  } catch (e) { srcState.zones.bio = 'fail'; }
+  return out;
+}
+const zonePolys = new Map(); // id -> {z, poly}
+function zoneStyle(z) {
+  if (z.kind !== 'bio') return { renderer, color: '#8000a0', weight: 1, fillColor: '#8000a0', fillOpacity: .07, dashArray: null, interactive: false };
+  const on = zoneActive(z);
+  return { renderer, color: '#0b7285', weight: on ? 2 : 1, dashArray: on ? null : '4 4', fillColor: '#0b7285', fillOpacity: on ? .2 : .03, interactive: false };
 }
 function drawZones(zs) {
   if (!document.getElementById('accCheck').checked) return;
   for (const z of zs) {
     if (zoneDrawn.has(z.id)) continue; zoneDrawn.add(z.id);
-    L.polygon(z.rings, { renderer, color: '#8000a0', weight: 1, fillColor: '#8000a0', fillOpacity: .07, interactive: false }).addTo(zoneLayer);
+    const poly = L.polygon(z.rings, zoneStyle(z)).addTo(zoneLayer);
+    zonePolys.set(z.id, { z, poly });
+    if (z.kind === 'bio') {
+      const mk = L.marker([(z.s + z.n) / 2, (z.w + z.e) / 2], { icon: L.divIcon({ className: '', html: '<div class="bioPin">🦅</div>', iconSize: [20, 20], iconAnchor: [10, 10] }) })
+        .bindTooltip(() => `${esc(z.label)}${z.name ? ': ' + esc(z.name) : ''}<br>Sensitive: ${z.period ? monthsText(z.period) : '?'}${zoneActive(z) ? ' <b>(active on your trip date)</b>' : ''}`)
+        .on('click', () => { if (z.url) window.open(z.url, '_blank', 'noopener'); });
+      zonePolys.get(z.id).pin = mk; mk.addTo(zoneLayer);
+    }
   }
+}
+function onTripDateChange() {
+  saveJSON('tb.date', document.getElementById('tripDate').value);
+  for (const { z, poly } of zonePolys.values()) poly.setStyle(zoneStyle(z));
+  for (const arr of features.values()) for (const r of arr) r.accCache = {};
+  restyleAll(); recompute();
 }
 function distToLine(pt, ll) { // metres
   const ky = 110540, kx = 111320 * Math.cos(pt[0] * Math.PI / 180); let best = Infinity;
@@ -704,7 +760,7 @@ async function checkAccess(recs) {
   setAccStatus(srcState.osm === 'fail' ? 'OpenStreetMap is not answering right now; try again later.' : '');
   const src = document.getElementById('srcStatus');
   if (src) src.textContent = `Sources: OpenStreetMap ${srcState.osm || 'not loaded yet'}; protected areas ` +
-    ZONE_LAYERS.map(z => `${z.label} ${srcState.zones[z.kind] || '–'}`).join(', ') + '.';
+    ZONE_LAYERS.map(z => `${z.label} ${srcState.zones[z.kind] || '–'}`).join(', ') + `; Biodiv'Sports wildlife zones ${srcState.zones.bio || '–'}.`;
 }
 function osmModeValue(tags, mode) { // returns [key, value] that applies to this mode
   const chains = { walk: [['foot', 'access']], bike: [['bicycle', 'vehicle', 'access']], vehicle: [['motorcar', 'motor_vehicle', 'vehicle', 'access'], ['motorcycle', 'motor_vehicle', 'vehicle', 'access']] }[mode];
@@ -727,6 +783,8 @@ function access(r, mode) {
     for (const [k, v] of vals) if (v === 'permissive') add('info', `OpenStreetMap: ${label([k, v])}`);
     for (const k of Object.keys(t)) if (k.endsWith(':conditional') && ['access', 'vehicle', 'motor_vehicle', 'motorcar', 'motorcycle', 'bicycle', 'foot'].includes(k.split(':')[0]))
       add('warn', `OpenStreetMap: seasonal/conditional rule ${k}=${t[k]}`);
+    if (t.seasonal && t.seasonal !== 'no') add('warn', `OpenStreetMap: seasonal way (seasonal=${t.seasonal})`);
+    if (t.winter_road === 'yes' || t.ice_road === 'yes') add('warn', 'OpenStreetMap: winter-only road');
     if (mode === 'vehicle' && ['footway', 'bridleway', 'steps', 'path'].includes(t.highway) && !vals.length)
       add('warn', `OpenStreetMap maps it as a ${t.highway}, not a track for vehicles`);
     if (t.tracktype === 'grade5' && mode !== 'walk') add('info', 'OpenStreetMap: very rough surface (grade 5)');
@@ -744,6 +802,11 @@ function access(r, mode) {
     if (level && kind !== 'entrance' && kind !== 'cattle_grid') add(level, `Barrier: ${kind.replace(/_/g, ' ')}${t.locked === 'yes' ? ' (locked)' : ''}${vals.length ? ' – ' + vals.map(([k, v]) => `${k}=${v}`).join(', ') : ''}`);
   }
   for (const z of r.zones || []) {
+    if (z.kind === 'bio') {
+      const on = zoneActive(z), months = z.period ? monthsText(z.period) : 'some months';
+      add(on ? (z.regulatory && mode === 'vehicle' ? 'ban' : 'warn') : 'info', `${z.label}${z.name ? ' "' + z.name + '"' : ''}: sensitive ${months}${on ? ' – including your trip date; stay on the path, keep quiet, dogs on a lead, avoid if you can' : ''}`);
+      continue;
+    }
     const rule = ZONE_RULE[z.kind]; const level = rule[mode];
     add(level, `${z.label}${z.name ? ' "' + z.name + '"' : ''}: ${rule.why}`);
   }
@@ -937,6 +1000,7 @@ document.getElementById('clearBtn').onclick = () => { waypoints = []; drawWaypoi
 document.getElementById('loopBtn').onclick = () => { if (waypoints.length > 1) addWaypoint(L.latLng(waypoints[0].lat, waypoints[0].lng)); };
 const profileL = document.getElementById('profileL'); profileL.value = profileSel.value;
 profileL.onchange = () => { profileSel.value = profileL.value; profileSel.onchange(); };
+{ const td = document.getElementById('tripDate'); const v = loadJSON('tb.date'); td.value = v && v >= new Date().toISOString().slice(0, 10) ? v : new Date().toISOString().slice(0, 10); td.onchange = onTripDateChange; }
 profileSel.onchange = prefSel.onchange = () => { profileL.value = profileSel.value; saveJSON('tb.profile', profile()); restyleAll(); recompute(); };
 const profile = () => ({ mode: profileSel.value, pref: prefSel.value });
 
@@ -1519,9 +1583,12 @@ async function routeRestrictions(legs) {
         if (/^OpenStreetMap/.test(x.text)) for (const w of r.osmWays || []) links.push([`OSM way ${w.id}`, `https://www.openstreetmap.org/way/${w.id}`]);
         if (/^Barrier/.test(x.text)) for (const b of r.barriers || []) links.push([`OSM node ${b.id}`, `https://www.openstreetmap.org/node/${b.id}`]);
         if (/^IGN/.test(x.text)) links.push(['Géoportail', geoportail(mid[0], mid[1], false)]);
-        for (const z of r.zones || []) if (x.text.startsWith(z.label)) links.push(['Géoportail', geoportail(mid[0], mid[1], false)], ['INPN search', `https://inpn.mnhn.fr/accueil/recherche-de-donnees?keyword=${encodeURIComponent(z.name || z.label)}`]);
+        for (const z of r.zones || []) if (x.text.startsWith(z.label)) {
+          if (z.kind === 'bio') { if (z.url) links.push(['Species / rules', z.url]); links.push(["Biodiv'Sports map", `https://biodiv-sports.fr/`]); }
+          else links.push(['Géoportail', geoportail(mid[0], mid[1], false)], ['INPN search', `https://inpn.mnhn.fr/accueil/recherche-de-donnees?keyword=${encodeURIComponent(z.name || z.label)}`]);
+        }
         const bar = /^Barrier/.test(x.text) && (r.barriers || [])[0];
-        items.push({ ...where, pin: bar ? bar.ll : null, level: x.level, kind: /^Barrier/.test(x.text) ? 'Barrier' : /^OpenStreetMap/.test(x.text) ? 'Access' : /^IGN/.test(x.text) ? 'Access' : 'Protected area', text: x.text.replace(/^OpenStreetMap: /, ''), links });
+        items.push({ ...where, pin: bar ? bar.ll : null, level: x.level, kind: /^Barrier/.test(x.text) ? 'Barrier' : /seasonal|winter|conditional/i.test(x.text) ? 'Seasonal' : /^OpenStreetMap/.test(x.text) ? 'Access' : /^IGN/.test(x.text) ? 'Access' : /^(Wildlife|Regulated wildlife)/.test(x.text) ? 'Seasonal wildlife' : 'Protected area', text: x.text.replace(/^OpenStreetMap: /, ''), links });
       }
     }
     if (r.cad && r.cad.verdict !== 'public') {
@@ -1579,6 +1646,14 @@ function renderRestrictions() {
     h += `<div class="rsItem"><b>${esc(c.nom)}</b> <span class="muted">(${esc(c.codeDepartement || '')})</span>${m && (m.tel || m.mail) ? `<div>${[m.tel ? `<a href="tel:${esc(m.tel.replace(/\s/g, ''))}">${esc(m.tel)}</a>` : '', m.mail ? esc(m.mail) : ''].filter(Boolean).join(' · ')}</div>` : ''}<div class="rsLinks">${links.join(' · ')}</div></div>`;
   }
   const deps = [...new Set(rsCommunes.map(c => c.departement ? c.departement.nom : c.codeDepartement))].filter(Boolean);
+  if (deps.length) {
+    const d = tripDate(), md = (d.getMonth() + 1) * 100 + d.getDate();
+    const fire = md >= 601 && md <= 930, hunt = md >= 901 || md <= 228;
+    const dateTxt = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    if (fire || hunt) h += `<h4 style="margin:10px 0 4px">Seasonal – whole area (${esc(dateTxt)})</h4>`;
+    if (fire) h += `<div class="rsItem lvl-warn"><div><b>⚠️ Forest fire season</b> <span class="muted">Seasonal</span></div><div>From June to September the prefect can close woods, heaths and unpaved forest tracks at short notice: typically motor vehicles from 13:00 to 05:00 and everyone at night. Check the day before you go.</div><div class="rsLinks"><a href="https://meteofrance.com/meteo-des-forets" target="_blank" rel="noopener">Météo des forêts (daily risk)</a> · ${deps.map(x => `<a href="https://www.google.com/search?q=${encodeURIComponent('préfecture ' + x + ' accès massifs forestiers risque incendie arrêté')}" target="_blank" rel="noopener">${esc(x)} closures</a>`).join(' · ')}</div></div>`;
+    if (hunt) h += `<div class="rsItem lvl-info"><div><b>ℹ️ Hunting season</b> <span class="muted">Seasonal</span></div><div>Driven hunts (battues) may be on, mostly on weekends and Wednesdays. Watch for "chasse en cours" signs and wear something bright.</div><div class="rsLinks">${deps.map(x => `<a href="https://www.google.com/search?q=${encodeURIComponent('fédération des chasseurs ' + x + ' dates ouverture fermeture chasse')}" target="_blank" rel="noopener">${esc(x)} dates</a>`).join(' · ')}</div></div>`;
+  }
   if (deps.length) h += `<div class="rsItem"><b>Prefecture orders</b> (seasonal fire-risk closures, natural areas)<div class="rsLinks">${deps.map(d => `<a href="https://www.google.com/search?q=${encodeURIComponent('arrêté préfectoral ' + d + ' circulation véhicules à moteur massifs forestiers')}" target="_blank" rel="noopener">${esc(d)}</a>`).join(' · ')}</div></div>`;
   list.innerHTML = h;
   // warning pins on the map, linked to the list
