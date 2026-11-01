@@ -70,6 +70,7 @@
   <button id="planBtn" title="Click on the map to add route points">✎ Plan</button>
   <button id="rbBtn" title="Roadbook editor and GPS spotting">📒</button>
   <button id="legendBtn">Layers</button>
+  <button id="rrBtn" title="Rebuild a GPX from a scanned roadbook">⇆ Scan→GPX</button>
   <button id="helpBtn" title="How it works">?</button>
   <div id="results"></div>
 </div>
@@ -1499,5 +1500,6 @@ document.getElementById('legendBtn').onclick = () => document.getElementById('le
 drawWaypoints(); setPlanning(false); refresh(); if (waypoints.length > 1) recompute();
 window.__acc = access; window.__rb = { buildRoadbook, tulipSVG, exportOpenRally, exportRoadbookPDF }; window.__tb = { graph, features, classify, cost, shortest, counts, cells }; // for debugging
 </script>
+<script>/*REVERSE_JS*/</script>
 </body>
 </html>

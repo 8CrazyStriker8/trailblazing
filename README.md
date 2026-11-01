@@ -6,3 +6,5 @@ Map app to find and plan trips on public paths in France (chemins ruraux, sentie
 - `src/app.html` is the source; run `npm install && node build.js` to rebuild `index.html` (inlines Leaflet).
 
 Data: IGN BD TOPO `troncon_de_route` via WFS, Plan IGN / aerial photos / cadastre via WMTS, IGN geocoding and altimetry services. Green = path whose IGN nature is Chemin/Sentier/Route empierrée/Escalier with no private or restricted-access flag. This is a heuristic: always check the cadastre and signs on site.
+
+Reverse roadbook (⇆ Scan→GPX button): load a scanned tulip roadbook, read its boxes with Claude's vision (needs your own Anthropic API key, kept in the browser) or type them in, pick the start on the map, and the app rebuilds the route by matching each box's distance, tulip angle and CAP to the IGN road and track network, then exports a GPX. Code in `src/reverse.js`, inlined by `build.js`.
