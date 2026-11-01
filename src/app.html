@@ -70,6 +70,7 @@
   <button id="planBtn" title="Click on the map to add route points">✎ Plan</button>
   <button id="rbBtn" title="Roadbook editor and GPS spotting">📒</button>
   <button id="legendBtn">Layers</button>
+  <button id="rrBtn" title="Rebuild a GPX from a scanned roadbook">⇆ Scan→GPX</button>
   <button id="helpBtn" title="How it works">?</button>
   <div id="results"></div>
 </div>
@@ -449,7 +450,7 @@ function samples(ll, step = 10, skip = 15) { // points along the line, skipping 
   return out;
 }
 async function checkCadastre(recs) {
-  recs = recs.filter(r => r.cls === 'path' && !r.cad && !r.cadPending);
+  recs = recs.filter(r => r.cls === 'path' && !r.cad && !r.cadPending && r.p.source !== 'osm');
   if (!recs.length) return;
   recs.forEach(r => r.cadPending = true);
   const work = recs.map(r => ({ r, pts: samples(r.ll) }));
@@ -494,6 +495,7 @@ function restyle(r) {
 const profileMode = () => document.getElementById('profile').value;
 function restyleAll() { for (const arr of features.values()) for (const r of arr) if (r.cad || r.accDone) restyle(r); }
 function cadHtml(r) {
+  if (r.p.source === 'osm') return `<span class="muted">OpenStreetMap section (reverse roadbook): no cadastre check.</span>`;
   if (!r.cad) return `<span class="muted">Checking the cadastre…</span>`;
   const pct = Math.round(r.cad.ratio * 100);
   const parcels = r.cad.parcels.slice(0, 4).map(p => esc(`${p.nom_com ? p.nom_com + ' ' : ''}${p.section || ''} ${p.numero || ''}`.trim() || p.idu || '?')).join(', ');
@@ -1499,5 +1501,6 @@ document.getElementById('legendBtn').onclick = () => document.getElementById('le
 drawWaypoints(); setPlanning(false); refresh(); if (waypoints.length > 1) recompute();
 window.__acc = access; window.__rb = { buildRoadbook, tulipSVG, exportOpenRally, exportRoadbookPDF }; window.__tb = { graph, features, classify, cost, shortest, counts, cells }; // for debugging
 </script>
+<script>/*REVERSE_JS*/</script>
 </body>
 </html>

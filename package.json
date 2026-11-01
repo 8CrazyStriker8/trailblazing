@@ -11,6 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "jspdf": "^2.5.2",
-    "leaflet": "^1.9.4"
+    "leaflet": "^1.9.4",
+    "pdfjs-dist": "3.11.174"
   }
 }
