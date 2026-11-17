@@ -264,8 +264,15 @@ function wfsUrl(c, start, order) {
     `&OUTPUTFORMAT=application/json&SRSNAME=EPSG:4326&COUNT=${PAGE}&STARTINDEX=${start}` +
     `&BBOX=${bbox},urn:ogc:def:crs:EPSG::4326`;
 }
+// fetch with a time limit, so a server that never answers cannot hang the app
+async function fetchT(url, opts = {}, ms = 60000) {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ac.signal }); }
+  catch (e) { throw e.name === 'AbortError' ? new Error(`${new URL(url).host} did not answer within ${Math.round(ms / 1000)} s`) : e; }
+  finally { clearTimeout(t); }
+}
 async function fetchJSON(url) {
-  const r = await fetch(url);
+  const r = await fetchT(url);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -585,7 +592,7 @@ function overpassCell(i, j) {
       let lastErr;
       for (const url of OVERPASS) {
         try {
-          const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+          const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 45000);
           if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
           const j = await r.json();
           const ways = [], barriers = [];
