@@ -1225,7 +1225,7 @@ document.getElementById('cadCheck').addEventListener('change', e => {
 const ACC_CLASSES = ['path', 'cycle', 'small'];
 const MODE_LABEL = { walk: 'walkers', bike: 'bikes', vehicle: '4x4 / motorbikes' };
 const OSM_CELL = 0.02, ZONE_CELL = 0.05, OSM_TOL = 15; // metres between IGN and OSM geometry
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
 const BAN_VALUES = ['no', 'private', 'agricultural', 'forestry', 'agricultural;forestry', 'forestry;agricultural', 'delivery', 'customers', 'permit', 'military', 'emergency', 'official', 'use_sidepath'];
 const WARN_VALUES = ['discouraged', 'destination'];
 const VALUE_FR = { no: 'forbidden', private: 'private', agricultural: 'farm vehicles only', forestry: 'forestry vehicles only', 'agricultural;forestry': 'farm & forestry only', 'forestry;agricultural': 'farm & forestry only', delivery: 'deliveries only', customers: 'customers only', permit: 'permit holders only', military: 'military only', emergency: 'emergency services only', official: 'official use only', use_sidepath: 'use the side path', discouraged: 'discouraged', destination: 'local access only', permissive: 'tolerated by the owner (can be withdrawn)', yes: 'allowed', designated: 'designated' };
@@ -3021,7 +3021,7 @@ function rrBack(path, d) { // node about d metres back along a walk (array of no
 const RR_OSM_CELL = 0.02, rrOsmState = new Map(); // key -> 'loading' | 'done' | 'error'
 const RR_SRC = {
   ign: { name: 'IGN', size: () => CELL, state: k => cells.get(k), load: list => requestCells(list), batch: 48 },
-  osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => rrOsmState.get(k), load: list => Promise.all(list.map(([k, c]) => rrOsmLoad(k, c))), batch: 12 },
+  osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => rrOsmState.get(k), load: (list, note) => rrOsmLoadMany(list, note), batch: 12 },
 };
 function rrCellsAround(ll, missing, src, r = 0.004) { // note unloaded data cells within ~r degrees of a point
   const S = src.size();
@@ -3049,23 +3049,31 @@ function rrOsmFeature(el) {
       nom_collaboratif_gauche: t.name || '', cpx_numero: t.ref || '', osm_highway: t.highway, osm_surface: t.surface || '', osm_tracktype: t.tracktype || '',
       osm_access: [t.access, t.motor_vehicle && 'motor_vehicle=' + t.motor_vehicle].filter(Boolean).join(' ') } };
 }
-function rrOsmLoad(key, c) {
-  if (rrOsmState.get(key) === 'done') return Promise.resolve();
-  rrOsmState.set(key, 'loading');
-  const [s, w, n, e] = c.map(v => v.toFixed(5));
-  const q = `[out:json][timeout:60];way["highway"](${s},${w},${n},${e});out tags geom;`;
+function rrOsmLoad(key, c) { return rrOsmLoadMany([[key, c]]); }
+function rrOsmLoadMany(list, note) { // one Overpass request for a group of nearby cells, per-cell requests otherwise
+  list = list.filter(([k]) => rrOsmState.get(k) !== 'done' && rrOsmState.get(k) !== 'loading');
+  if (!list.length) return Promise.resolve();
+  const bb = list.reduce((b, [, c]) => [Math.min(b[0], c[0]), Math.min(b[1], c[1]), Math.max(b[2], c[2]), Math.max(b[3], c[3])], [90, 180, -90, -180]);
+  if (list.length > 1 && (bb[2] - bb[0] > 0.081 || bb[3] - bb[1] > 0.081)) {
+    let done = 0;
+    return Promise.all(list.map(x => rrOsmLoadMany([x]).then(() => { done++; if (note) note(done, list.length); })));
+  }
+  list.forEach(([k]) => rrOsmState.set(k, 'loading'));
+  const [s, w, n, e] = bb.map(v => v.toFixed(5));
+  const q = `[out:json][timeout:50];way["highway"](${s},${w},${n},${e});out tags geom;`;
   const run = async () => {
     let lastErr;
     for (const url of OVERPASS) {
       try {
-        const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 75000);
+        if (note) note(0, 1, new URL(url).host);
+        const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 60000);
         if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
         const j = await r.json();
         addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
-        rrOsmState.set(key, 'done'); return;
-      } catch (err) { lastErr = err; }
+        list.forEach(([k]) => rrOsmState.set(k, 'done')); return;
+      } catch (err) { lastErr = err; console.warn('Overpass', url, err.message); }
     }
-    rrOsmState.set(key, 'error'); throw lastErr;
+    list.forEach(([k]) => rrOsmState.set(k, 'error')); throw lastErr;
   };
   const pr = overpassBusy.then(run, run); // one Overpass request at a time, shared with the access check (fair use)
   overpassBusy = pr.catch(() => {});
@@ -3192,7 +3200,12 @@ async function rrMatch(onProgress) {
     await requestCells(startCells(RR_SRC.ign));
     if (want === 'auto' && !rrHasData('ign', st0, 1500)) RR.src = 'osm'; // outside France: IGN has nothing here
   }
-  if (RR.src === 'osm') { onProgress('Loading OpenStreetMap data around the start…'); await RR_SRC.osm.load(startCells(RR_SRC.osm)); }
+  if (RR.src === 'osm') {
+    const t0 = Date.now(), msg = 'Loading OpenStreetMap data around the start…';
+    onProgress(msg);
+    const tick = setInterval(() => { try { onProgress(`${msg} ${Math.round((Date.now() - t0) / 1000)} s (Overpass servers can take up to a minute)`); } catch (e) {} }, 1000);
+    try { await RR_SRC.osm.load(startCells(RR_SRC.osm)); } finally { clearInterval(tick); }
+  }
   const src = RR_SRC[RR.src];
   let beam = rrStartStates(boxes[0], mode);
   if (!beam.length) throw new Error(`No usable road or track near the start point in the ${src.name} data${RR.src === 'osm' ? ' (or the OpenStreetMap server did not answer: try again in a minute)' : ''}.`);
