@@ -7,7 +7,7 @@ const RR = {
   src: 'ign',
   secs: [], cur: 0, // roadbook sections (liaisons, special stages…), each with its own boxes; distances restart in each
   start: null, startMarker: null, layer: L.layerGroup().addTo(map), picking: null,
-  files: [], result: null, running: false,
+  files: [], pages: [], result: null, running: false, // pages: [{label, get: async () => image content block}]
 };
 Object.defineProperty(RR, 'boxes', { get: () => RR.secs[RR.cur].boxes, set: v => { RR.secs[RR.cur].boxes = v; } });
 { const v = loadJSON('tb.rr.boxes'); RR.secs = Array.isArray(v) ? [{ name: 'Roadbook', boxes: v }] : (v && v.secs && v.secs.length ? v.secs : [{ name: 'Roadbook', boxes: [] }]); RR.cur = v && v.cur < RR.secs.length ? v.cur : 0; }
@@ -181,7 +181,9 @@ function rrRender() {
 function rrUpdateButtons() {
   $rr('rrReadText').disabled = !RR.pages.some(p => p.pdfPage) || RR.running;
   $rr('rrRead').disabled = !RR.pages.length || !$rr('rrKey').value.trim() || RR.running;
-  $rr('rrRun').disabled = RR.running || !RR.start || RR.boxes.length < 2;
+  $rr('rrRun').disabled = !RR.running && (!RR.start || RR.boxes.length < 2);
+  $rr('rrRun').textContent = RR.running ? 'Stop' : 'Rebuild route';
+  $rr('rrRun').title = RR.running ? 'Stop the rebuild' : !RR.start ? 'Pick the start point on the map first (◎ Pick start on map)' : RR.boxes.length < 2 ? 'The roadbook needs at least 2 boxes' : '';
   $rr('rrGpx').disabled = $rr('rrPlan').disabled = !RR.result || !RR.result.coords.length;
 }
 const rrNum = v => { const s = String(v).replace(',', '.').trim(); if (s === '') return null; const n = parseFloat(s); return isFinite(n) ? n : null; };
@@ -274,7 +276,6 @@ function rrDrawPins() {
 // ---------- 1. Reading the scan with Claude (vision) ----------
 // Every page (photo, or PDF page rendered with pdf.js) is sent on its own, a few at a time, and the
 // boxes come back in document order with the section they belong to.
-RR.pages = []; // [{label, get: async () => image content block}]
 async function rrPdfjs() {
   if (!window.pdfjsLib) { await loadScript('vendor/pdf.min.js'); window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js'; }
   return window.pdfjsLib;
@@ -462,7 +463,7 @@ $rr('rrRead').onclick = async () => {
     st.innerHTML = `Read <b>${nBoxes}</b> boxes in <b>${secs.length}</b> section${secs.length > 1 ? 's' : ''}${gps ? `, ${gps} with GPS points (pinned)` : ''}${low ? `, <b style="color:#d33">${low} unsure</b>` : ''}. Pick the section to rebuild above the table, and check its distances and arrows against the scan.` +
       (errors.length ? `<br><span style="color:#d33">${errors.length} page${errors.length > 1 ? 's' : ''} failed: ${esc(errors.slice(0, 3).join('; '))}</span>` : '');
   } catch (err) { st.innerHTML = `<span style="color:#d33">Reading failed: ${esc(err.message)}</span>`; }
-  finally { RR.running = false; rrUpdateButtons(); }
+  finally { RR.running = false; RR.stop = null; rrUpdateButtons(); }
 };
 
 // ---------- Free reading of digital PDFs (text layer, no API) ----------
@@ -651,7 +652,7 @@ function rrOsmLoad(key, c) {
     let lastErr;
     for (const url of OVERPASS) {
       try {
-        const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 75000);
         if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
         const j = await r.json();
         addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
@@ -861,6 +862,9 @@ function rrFixEdges() { // make walk edges carry their origin node so a zero-len
 // ---------- 3. Results ----------
 $rr('rrRun').onclick = async () => {
   const st = $rr('rrStatus');
+  if (RR.running) { RR.cancel = true; if (RR.stop) RR.stop(new Error('Rebuild stopped.')); return; }
+  RR.cancel = false;
+  const stopped = new Promise((_, rej) => { RR.stop = rej; });
   if (RR.boxes[0] && RR.boxes[0].km == null) RR.boxes[0].km = 0;
   for (let i = 1; i < RR.boxes.length; i++) if (RR.boxes[i].km != null && RR.boxes[i - 1].km != null && RR.boxes[i].km < RR.boxes[i - 1].km) {
     st.innerHTML = `<span style="color:#d33">Box ${i + 1}'s total distance is smaller than box ${i}'s. Fix it first.</span>`; return;
@@ -869,7 +873,7 @@ $rr('rrRun').onclick = async () => {
   try {
     rrFixEdges();
     const t0 = Date.now();
-    const best = await rrMatch(t => { rrFixEdges(); st.textContent = t; });
+    const best = await Promise.race([rrMatch(t => { if (RR.cancel) throw new Error('Rebuild stopped.'); rrFixEdges(); st.textContent = t; }), stopped]);
     rrShow(best, (Date.now() - t0) / 1000);
   } catch (err) { st.innerHTML = `<span style="color:#d33">${esc(err.message)}</span>`; }
   finally { RR.running = false; rrUpdateButtons(); }
