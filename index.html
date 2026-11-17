@@ -2992,7 +2992,8 @@ $rr('rrReadText').onclick = async () => {
 // on the tulip angle, the CAP, the side tracks and the surface. A box can also be skipped at a cost.
 const RR_BEAM = 120, RR_MAXCAND = 400, RR_LOOK = 25;
 function rrAllowed(rec, mode) {
-  if (!rec || rec.cls === 'motorway') return false;
+  if (!rec) return false;
+  if (rec.cls === 'motorway' && mode !== 'vehicle') return false; // roadbook liaisons do use motorways (tolls, interchanges)
   if ((rec.p.source === 'osm') !== (RR.src === 'osm')) return false; // stay on one network
   const nat = norm(rec.p.nature);
   if (mode === 'vehicle' && (nat === 'sentier' || nat === 'escalier' || rec.cls === 'cycle')) return false;
