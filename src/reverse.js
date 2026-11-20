@@ -203,7 +203,7 @@ function rrRender() {
       <td><input class="cap" data-f="cap" value="${b.cap == null ? '' : b.cap}" inputmode="numeric" placeholder="–"></td>
       <td><select data-f="surf">${SURF_OPTS.map(([v, t]) => `<option value="${v}"${(b.surf || '') === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
         <input class="road" data-f="road" value="${esc(b.road || '')}" placeholder="road" title="Road number taken at the exit (e.g. D56), from the signs in the box">
-        ${b.sym && b.sym.length ? `<div style="max-width:110px;line-height:0">${rrSymStrip(b, 15)}</div>` : ''}
+        ${b.sym && b.sym.length ? `<div style="max-width:110px;line-height:0">${rrSymStrip(b, 18)}</div>` : ''}
         ${b.notes ? `<div class="muted" style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.notes)}">${esc(b.notes)}</div>` : ''}</td>
       <td style="white-space:nowrap"><button data-act="ra" title="Roundabout: the arrow is the exit taken"${b.ra ? ' class="on"' : ''}>⟳</button><button data-act="pin" title="${b.lock ? (b.gps ? 'GPS point from the roadbook' : 'Pinned') + ': click to unpin' : 'Pin this box to a map point'}"${b.lock ? ' class="on"' : ''}>📍</button><button data-act="ins" title="Insert a box after this one">+</button><button data-act="del" title="Delete">✕</button></td>
     </tr>`;
@@ -282,7 +282,7 @@ function rrLoadXML(text, fname) {
   const name = r.name || String(fname || 'Roadbook').replace(/\.(gpx|xml)$/i, '');
   const boxes = r.boxes.map(x => rrCleanBox({ km: x.km, cap: x.cap, notes: x.notes.join(' · '), gps_lat: x.lat, gps_lon: x.lng,
     rel: x.tb ? x.tb.rel : null, branches: x.tb && x.tb.branches ? x.tb.branches.map(y => y.rel ?? y) : [], surf: x.tb && ['road', 'track', 'path'].includes(x.tb.outSurf) ? x.tb.outSurf : null,
-    sym: x.sym.length ? x.sym : undefined, danger: x.danger, speed: x.speed }));
+    sym: [...new Set([...x.sym, ...rrSymsFromNotes(x.notes.join(' · ')).sym])], danger: x.danger, speed: x.speed ?? rrSymsFromNotes(x.notes.join(' · ')).speed }));
   if (boxes.length && boxes[0].km == null) boxes[0].km = 0;
   RR.secs = [{ name, boxes }]; RR.cur = 0; rrRenderSecs(); rrSelectSec(0);
   if (r.track.length > 1) {
