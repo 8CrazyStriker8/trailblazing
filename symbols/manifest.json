@@ -1,0 +1,1729 @@
+{
+ "name": "trailblazing-roadbook-symbols",
+ "version": "1.1.0",
+ "source": "4L Trophy 2026 roadbooks, Étapes 1–5 (legend page + symbols found in the tulip boxes); v1.1.0 adds roundabouts (direction and exit number) and other common rally roadbook symbols",
+ "viewBox": "0 0 64 64",
+ "style": "single-colour black line art on transparent background; recolour with CSS (stroke/fill currentColor) if needed",
+ "categories": {
+  "control": "Checkpoints, CP/CPV/CS, arches, flags, timing",
+  "danger": "Danger levels and caution marks",
+  "terrain": "Ground, relief and surface",
+  "sign": "Road signs drawn in the tulip",
+  "zone": "Speed-control and bivouac zones",
+  "navigation": "Track/route information",
+  "landmark": "Landmarks to aim at or pass",
+  "service": "Services: fuel, police, toll, medical, bivouac"
+ },
+ "roadbook_json": {
+  "field": "sym",
+  "description": "Each box in a TrailBlazing roadbook JSON (format trailblazing-roadbook v2) has \"sym\": an ordered list of symbol ids from this manifest, as drawn in the box. \"danger\" (0–3) repeats the highest danger level (! / !! / !!!), \"speed\" holds the speed limit value when \"speed_limit\" is present, \"cap\" the heading, \"ra\" a roundabout (with its roundabout_* direction / exit symbols first in \"sym\"), \"surf\" the exit surface (road / track / path = off-track).",
+  "example": {
+   "num": 42,
+   "km": 263.2,
+   "partial": 11.7,
+   "rel": 80,
+   "cap": 230,
+   "surf": "track",
+   "ra": false,
+   "branches": [
+    -10
+   ],
+   "danger": 0,
+   "sym": [
+    "caution",
+    "antenna",
+    "mound",
+    "house",
+    "cs",
+    "time"
+   ],
+   "notes": "AD en piste C~230 vers petite maison. CS1 obligatoire, fermé à 14h30"
+  }
+ },
+ "symbols": [
+  {
+   "id": "cp",
+   "label_fr": "CP – Contrôle de passage",
+   "label_en": "CP – Check point",
+   "category": "control",
+   "svg": "svg/cp.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 12,
+   "abbr": "CP"
+  },
+  {
+   "id": "cpv",
+   "label_fr": "CPV – Contrôle de passage virtuel",
+   "label_en": "CPV – Virtual check point",
+   "category": "control",
+   "svg": "svg/cpv.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 43,
+   "abbr": "CPV"
+  },
+  {
+   "id": "cs",
+   "label_fr": "CS – Contrôle sécurité",
+   "label_en": "CS – Safety control",
+   "category": "control",
+   "svg": "svg/cs.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 44,
+   "abbr": "CS"
+  },
+  {
+   "id": "wpm",
+   "label_fr": "WPM – Waypoint masqué",
+   "label_en": "WPM – Hidden waypoint",
+   "category": "control",
+   "svg": "svg/wpm.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 9,
+   "abbr": "WPM"
+  },
+  {
+   "id": "radius",
+   "label_fr": "Rayon de validation du CP",
+   "label_en": "Check point validation radius",
+   "category": "control",
+   "svg": "svg/radius.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 15,
+   "abbr": "RAYON"
+  },
+  {
+   "id": "arch",
+   "label_fr": "Arche CP (départ / arrivée)",
+   "label_en": "CP arch (start / finish)",
+   "category": "control",
+   "svg": "svg/arch.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 10
+  },
+  {
+   "id": "flag",
+   "label_fr": "Drapeau 4L (repère de navigation numéroté)",
+   "label_en": "4L flag (numbered navigation marker)",
+   "category": "control",
+   "svg": "svg/flag.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 52
+  },
+  {
+   "id": "finish",
+   "label_fr": "Arrivée (drapeau à damier)",
+   "label_en": "Finish (chequered flag)",
+   "category": "control",
+   "svg": "svg/finish.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 10
+  },
+  {
+   "id": "raz",
+   "label_fr": "RAZ – Remise à zéro du trip",
+   "label_en": "RAZ – Reset trip meter",
+   "category": "control",
+   "svg": "svg/raz.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 6,
+   "abbr": "RAZ"
+  },
+  {
+   "id": "time",
+   "label_fr": "Horaire d'ouverture / fermeture du CP",
+   "label_en": "CP opening / closing time",
+   "category": "control",
+   "svg": "svg/time.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 17
+  },
+  {
+   "id": "chrono",
+   "label_fr": "Chrono in (prise de temps)",
+   "label_en": "Chrono in (timing start)",
+   "category": "control",
+   "svg": "svg/chrono.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "timing",
+   "label_fr": "Timing indicatif depuis le départ",
+   "label_en": "Indicative timing from start",
+   "category": "control",
+   "svg": "svg/timing.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "mandatory",
+   "label_fr": "Passage obligatoire",
+   "label_en": "Mandatory passage",
+   "category": "control",
+   "svg": "svg/mandatory.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 81,
+   "abbr": "OBLIG."
+  },
+  {
+   "id": "imperative",
+   "label_fr": "IMP – Impératif",
+   "label_en": "IMP – Imperative",
+   "category": "navigation",
+   "svg": "svg/imperative.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 9,
+   "abbr": "IMP"
+  },
+  {
+   "id": "danger1",
+   "label_fr": "Danger ! (1 point)",
+   "label_en": "Danger ! (level 1)",
+   "category": "danger",
+   "svg": "svg/danger1.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 19,
+   "abbr": "!",
+   "also_sets": {
+    "danger": 1
+   }
+  },
+  {
+   "id": "danger2",
+   "label_fr": "Danger !! (2 points)",
+   "label_en": "Danger !! (level 2)",
+   "category": "danger",
+   "svg": "svg/danger2.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2,
+   "abbr": "!!",
+   "also_sets": {
+    "danger": 2
+   }
+  },
+  {
+   "id": "danger3",
+   "label_fr": "Attention, danger, précaution !!!",
+   "label_en": "Caution, danger !!! (level 3)",
+   "category": "danger",
+   "svg": "svg/danger3.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 99,
+   "abbr": "!!!",
+   "also_sets": {
+    "danger": 3
+   }
+  },
+  {
+   "id": "caution",
+   "label_fr": "Attention, danger (triangle)",
+   "label_en": "Caution, danger (triangle)",
+   "category": "danger",
+   "svg": "svg/caution.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 50
+  },
+  {
+   "id": "slow",
+   "label_fr": "RLT – Ralentir",
+   "label_en": "RLT – Slow down",
+   "category": "danger",
+   "svg": "svg/slow.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 37,
+   "abbr": "RLT"
+  },
+  {
+   "id": "kc",
+   "label_fr": "KC – Cassé (piste / route)",
+   "label_en": "KC – Broken (track / road)",
+   "category": "danger",
+   "svg": "svg/kc.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 39,
+   "abbr": "KC"
+  },
+  {
+   "id": "fesh_fesh",
+   "label_fr": "Fesh fesh (sable poudreux)",
+   "label_en": "Fesh fesh (powder sand)",
+   "category": "terrain",
+   "svg": "svg/fesh_fesh.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 8
+  },
+  {
+   "id": "soft_sand",
+   "label_fr": "Mou / soft (passage ensablé)",
+   "label_en": "Soft sand",
+   "category": "terrain",
+   "svg": "svg/soft_sand.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 7
+  },
+  {
+   "id": "trench",
+   "label_fr": "Talus, tranchée, barrière de sable",
+   "label_en": "Bank, trench, sand barrier",
+   "category": "terrain",
+   "svg": "svg/trench.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 16
+  },
+  {
+   "id": "hole",
+   "label_fr": "Trou, fossé",
+   "label_en": "Hole, ditch",
+   "category": "terrain",
+   "svg": "svg/hole.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 7
+  },
+  {
+   "id": "oued",
+   "label_fr": "Oued (lit à sec)",
+   "label_en": "Oued / wadi (dry bed)",
+   "category": "terrain",
+   "svg": "svg/oued.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 12
+  },
+  {
+   "id": "oued_water",
+   "label_fr": "Oued, eau",
+   "label_en": "Oued, water",
+   "category": "terrain",
+   "svg": "svg/oued_water.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 24
+  },
+  {
+   "id": "bump",
+   "label_fr": "Bosse",
+   "label_en": "Bump",
+   "category": "terrain",
+   "svg": "svg/bump.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "speed_bump",
+   "label_fr": "Dos d'âne / ralentisseur",
+   "label_en": "Speed bump",
+   "category": "terrain",
+   "svg": "svg/speed_bump.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 9
+  },
+  {
+   "id": "bumpy",
+   "label_fr": "Tôle ondulée",
+   "label_en": "Bumpy / corrugated track",
+   "category": "terrain",
+   "svg": "svg/bumpy.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 8
+  },
+  {
+   "id": "stones",
+   "label_fr": "Pierres, cailloux (cailloux blancs / rouges)",
+   "label_en": "Stones, rocks (white / red stones)",
+   "category": "terrain",
+   "svg": "svg/stones.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 47
+  },
+  {
+   "id": "cairn",
+   "label_fr": "Cairn, tas de cailloux",
+   "label_en": "Cairn, pile of stones",
+   "category": "navigation",
+   "svg": "svg/cairn.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 155
+  },
+  {
+   "id": "dunes",
+   "label_fr": "Dunes / dunettes",
+   "label_en": "Dunes / little dunes",
+   "category": "terrain",
+   "svg": "svg/dunes.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "mound",
+   "label_fr": "Butte, monticule",
+   "label_en": "Mound",
+   "category": "terrain",
+   "svg": "svg/mound.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 7
+  },
+  {
+   "id": "mountain",
+   "label_fr": "Montagne, collines",
+   "label_en": "Mountain, hills",
+   "category": "terrain",
+   "svg": "svg/mountain.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 41
+  },
+  {
+   "id": "pass",
+   "label_fr": "Col, passe de montagne",
+   "label_en": "Mountain pass",
+   "category": "terrain",
+   "svg": "svg/pass.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 7
+  },
+  {
+   "id": "summit",
+   "label_fr": "Sommet",
+   "label_en": "Summit",
+   "category": "terrain",
+   "svg": "svg/summit.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "ascent",
+   "label_fr": "Montée",
+   "label_en": "Ascent",
+   "category": "terrain",
+   "svg": "svg/ascent.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 16
+  },
+  {
+   "id": "descent",
+   "label_fr": "Descente",
+   "label_en": "Descent",
+   "category": "terrain",
+   "svg": "svg/descent.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 11
+  },
+  {
+   "id": "plateau",
+   "label_fr": "Plateau désertique",
+   "label_en": "Desert plateau",
+   "category": "terrain",
+   "svg": "svg/plateau.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 22
+  },
+  {
+   "id": "vegetation",
+   "label_fr": "Végétation, herbe à chameau, arbustes",
+   "label_en": "Bush, camel grass, shrubs",
+   "category": "terrain",
+   "svg": "svg/vegetation.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 12
+  },
+  {
+   "id": "lake",
+   "label_fr": "Lac",
+   "label_en": "Lake",
+   "category": "terrain",
+   "svg": "svg/lake.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "stop",
+   "label_fr": "Stop",
+   "label_en": "Stop",
+   "category": "sign",
+   "svg": "svg/stop.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 10
+  },
+  {
+   "id": "halt",
+   "label_fr": "Halte (contrôle police)",
+   "label_en": "Halt (police check)",
+   "category": "sign",
+   "svg": "svg/halt.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "no_entry",
+   "label_fr": "Sens interdit",
+   "label_en": "No entry",
+   "category": "sign",
+   "svg": "svg/no_entry.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "speed_limit",
+   "label_fr": "Limitation de vitesse (valeur dans \"speed\")",
+   "label_en": "Speed limit (value in \"speed\")",
+   "category": "sign",
+   "svg": "svg/speed_limit.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 37,
+   "abbr": "MAX",
+   "parameter": "speed (km/h) on the box, e.g. \"speed\":60"
+  },
+  {
+   "id": "speed_end",
+   "label_fr": "Fin de limitation de vitesse",
+   "label_en": "End of speed limit",
+   "category": "sign",
+   "svg": "svg/speed_end.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 14
+  },
+  {
+   "id": "zone_start",
+   "label_fr": "DZ – Début de zone de contrôle vitesse",
+   "label_en": "DZ – Start of speed control zone",
+   "category": "zone",
+   "svg": "svg/zone_start.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 15,
+   "abbr": "DZ"
+  },
+  {
+   "id": "zone_end",
+   "label_fr": "FZ – Fin de zone de contrôle vitesse",
+   "label_en": "FZ – End of speed control zone",
+   "category": "zone",
+   "svg": "svg/zone_end.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 15,
+   "abbr": "FZ"
+  },
+  {
+   "id": "speed_camera",
+   "label_fr": "Radar",
+   "label_en": "Speed camera",
+   "category": "sign",
+   "svg": "svg/speed_camera.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "traffic_light",
+   "label_fr": "Feu tricolore",
+   "label_en": "Traffic light",
+   "category": "sign",
+   "svg": "svg/traffic_light.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 6
+  },
+  {
+   "id": "sign_winding",
+   "label_fr": "Panneau virages / route sinueuse",
+   "label_en": "Winding road sign",
+   "category": "sign",
+   "svg": "svg/sign_winding.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 21
+  },
+  {
+   "id": "sign_steep",
+   "label_fr": "Panneau pente / descente dangereuse",
+   "label_en": "Steep slope sign",
+   "category": "sign",
+   "svg": "svg/sign_steep.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 8
+  },
+  {
+   "id": "sign_rockfall",
+   "label_fr": "Panneau chute de pierres",
+   "label_en": "Falling rocks sign",
+   "category": "sign",
+   "svg": "svg/sign_rockfall.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "sign_slow",
+   "label_fr": "Panneau SLOW",
+   "label_en": "SLOW sign",
+   "category": "sign",
+   "svg": "svg/sign_slow.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 4
+  },
+  {
+   "id": "narrow",
+   "label_fr": "Étroit (route / piste)",
+   "label_en": "Narrow (road / track)",
+   "category": "sign",
+   "svg": "svg/narrow.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 6
+  },
+  {
+   "id": "shoulders",
+   "label_fr": "Accotements dangereux",
+   "label_en": "Dangerous shoulders",
+   "category": "sign",
+   "svg": "svg/shoulders.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 5
+  },
+  {
+   "id": "works",
+   "label_fr": "Travaux",
+   "label_en": "Road works",
+   "category": "sign",
+   "svg": "svg/works.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 4
+  },
+  {
+   "id": "end_winding",
+   "label_fr": "Fin de route sinueuse",
+   "label_en": "End of winding road",
+   "category": "sign",
+   "svg": "svg/end_winding.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "no_parking",
+   "label_fr": "Stationnement interdit",
+   "label_en": "No parking",
+   "category": "sign",
+   "svg": "svg/no_parking.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "no_stop",
+   "label_fr": "Ne pas s'arrêter",
+   "label_en": "No stop",
+   "category": "sign",
+   "svg": "svg/no_stop.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 4
+  },
+  {
+   "id": "prohibited",
+   "label_fr": "Interdit (passage)",
+   "label_en": "Prohibited (way)",
+   "category": "sign",
+   "svg": "svg/prohibited.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "one_way",
+   "label_fr": "Passage unique / piste unique",
+   "label_en": "Only one way / single track",
+   "category": "navigation",
+   "svg": "svg/one_way.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 14
+  },
+  {
+   "id": "dead_end",
+   "label_fr": "Cul-de-sac",
+   "label_en": "Dead end",
+   "category": "navigation",
+   "svg": "svg/dead_end.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "alt_route",
+   "label_fr": "Variante possible (flèche grise)",
+   "label_en": "Possible alternative (grey arrow)",
+   "category": "navigation",
+   "svg": "svg/alt_route.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "pp",
+   "label_fr": "PP – Piste principale",
+   "label_en": "PP – Main track",
+   "category": "navigation",
+   "svg": "svg/pp.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 3,
+   "abbr": "PP"
+  },
+  {
+   "id": "parallel",
+   "label_fr": "PP// – Pistes principales parallèles",
+   "label_en": "MT// – Parallel main tracks",
+   "category": "navigation",
+   "svg": "svg/parallel.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 54,
+   "abbr": "PP//"
+  },
+  {
+   "id": "nbx",
+   "label_fr": "NBX – Nombreux / nombreuses (pistes)",
+   "label_en": "NBX – Several / many (tracks)",
+   "category": "navigation",
+   "svg": "svg/nbx.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 22,
+   "abbr": "NBX"
+  },
+  {
+   "id": "offtrack",
+   "label_fr": "HP – Hors piste",
+   "label_en": "HP – Off track",
+   "category": "navigation",
+   "svg": "svg/offtrack.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 4,
+   "abbr": "HP"
+  },
+  {
+   "id": "offtrack_end",
+   "label_fr": "Fin hors piste",
+   "label_en": "End off track",
+   "category": "navigation",
+   "svg": "svg/offtrack_end.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 0,
+   "abbr": "HP"
+  },
+  {
+   "id": "road",
+   "label_fr": "Goudron / route",
+   "label_en": "Tarmac / road",
+   "category": "navigation",
+   "svg": "svg/road.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "distance",
+   "label_fr": "Distance indiquée dans la case (ex. 80 m)",
+   "label_en": "Distance given in the box (e.g. 80 m)",
+   "category": "navigation",
+   "svg": "svg/distance.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "good_way",
+   "label_fr": "Bonne direction (smiley)",
+   "label_en": "Right way (smiley)",
+   "category": "navigation",
+   "svg": "svg/good_way.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "wrong_way",
+   "label_fr": "Mauvaise direction (smiley triste)",
+   "label_en": "Wrong way (sad smiley)",
+   "category": "navigation",
+   "svg": "svg/wrong_way.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "road_wrong",
+   "label_fr": "Route, mauvaise direction",
+   "label_en": "Road, wrong direction",
+   "category": "navigation",
+   "svg": "svg/road_wrong.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 0
+  },
+  {
+   "id": "track_wrong",
+   "label_fr": "Piste, mauvaise direction",
+   "label_en": "Track, wrong direction",
+   "category": "navigation",
+   "svg": "svg/track_wrong.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 0
+  },
+  {
+   "id": "village",
+   "label_fr": "Village, ville",
+   "label_en": "Village, town",
+   "category": "landmark",
+   "svg": "svg/village.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 58,
+   "abbr": "V"
+  },
+  {
+   "id": "house",
+   "label_fr": "Maison, cabane, école",
+   "label_en": "House, hut, school",
+   "category": "landmark",
+   "svg": "svg/house.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 24
+  },
+  {
+   "id": "hut",
+   "label_fr": "Cabane en paille, abri",
+   "label_en": "Straw hut, shelter",
+   "category": "landmark",
+   "svg": "svg/hut.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "building",
+   "label_fr": "Château / bâtiment remarquable (hôtel, villa)",
+   "label_en": "Castle / notable building (hotel, villa)",
+   "category": "landmark",
+   "svg": "svg/building.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 10
+  },
+  {
+   "id": "tree",
+   "label_fr": "Arbre",
+   "label_en": "Tree",
+   "category": "landmark",
+   "svg": "svg/tree.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 12
+  },
+  {
+   "id": "palm",
+   "label_fr": "Palmier, palmeraie",
+   "label_en": "Palm tree, palm grove",
+   "category": "landmark",
+   "svg": "svg/palm.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 9
+  },
+  {
+   "id": "well",
+   "label_fr": "Puits",
+   "label_en": "Well",
+   "category": "landmark",
+   "svg": "svg/well.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 6
+  },
+  {
+   "id": "tyre",
+   "label_fr": "Pneu",
+   "label_en": "Tyre",
+   "category": "landmark",
+   "svg": "svg/tyre.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 7
+  },
+  {
+   "id": "ruins",
+   "label_fr": "Ruine",
+   "label_en": "Ruins",
+   "category": "landmark",
+   "svg": "svg/ruins.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 6
+  },
+  {
+   "id": "cemetery",
+   "label_fr": "Cimetière",
+   "label_en": "Cemetery",
+   "category": "landmark",
+   "svg": "svg/cemetery.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 0
+  },
+  {
+   "id": "wall",
+   "label_fr": "Mur, clôture, remparts",
+   "label_en": "Wall, fence, ramparts",
+   "category": "landmark",
+   "svg": "svg/wall.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "fence",
+   "label_fr": "Clôture barbelée",
+   "label_en": "Barbed wire fence",
+   "category": "landmark",
+   "svg": "svg/fence.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "bridge",
+   "label_fr": "Pont, radier",
+   "label_en": "Bridge, ford",
+   "category": "landmark",
+   "svg": "svg/bridge.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "power_lines",
+   "label_fr": "Poteaux, lignes électriques",
+   "label_en": "Electric lines, poles",
+   "category": "landmark",
+   "svg": "svg/power_lines.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 25
+  },
+  {
+   "id": "antenna",
+   "label_fr": "Antenne, pylône",
+   "label_en": "Antenna, pylon",
+   "category": "landmark",
+   "svg": "svg/antenna.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 28
+  },
+  {
+   "id": "water_tower",
+   "label_fr": "Château d'eau",
+   "label_en": "Water tower",
+   "category": "landmark",
+   "svg": "svg/water_tower.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "water_tank",
+   "label_fr": "Bac d'eau",
+   "label_en": "Water tank",
+   "category": "landmark",
+   "svg": "svg/water_tank.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "mosque",
+   "label_fr": "Mosquée",
+   "label_en": "Mosque",
+   "category": "landmark",
+   "svg": "svg/mosque.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "fort",
+   "label_fr": "Fort militaire",
+   "label_en": "Military fort",
+   "category": "landmark",
+   "svg": "svg/fort.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "mine",
+   "label_fr": "Mines",
+   "label_en": "Mines",
+   "category": "landmark",
+   "svg": "svg/mine.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 9
+  },
+  {
+   "id": "tent",
+   "label_fr": "Tente nomade",
+   "label_en": "Nomad tent",
+   "category": "landmark",
+   "svg": "svg/tent.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "camp",
+   "label_fr": "Campement",
+   "label_en": "Camp",
+   "category": "landmark",
+   "svg": "svg/camp.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "pyramids",
+   "label_fr": "Petites pyramides",
+   "label_en": "Small pyramids",
+   "category": "landmark",
+   "svg": "svg/pyramids.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "smoke",
+   "label_fr": "Fumée (repère au loin)",
+   "label_en": "Smoke (distant landmark)",
+   "category": "landmark",
+   "svg": "svg/smoke.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "signpost",
+   "label_fr": "Panneau, pano (repère)",
+   "label_en": "Signpost, sign board (landmark)",
+   "category": "landmark",
+   "svg": "svg/signpost.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 31
+  },
+  {
+   "id": "camel_sign",
+   "label_fr": "Pano en forme de chameau",
+   "label_en": "Camel-shaped sign",
+   "category": "landmark",
+   "svg": "svg/camel_sign.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 15
+  },
+  {
+   "id": "landmark",
+   "label_fr": "Monument / repère remarquable",
+   "label_en": "Monument / notable landmark",
+   "category": "landmark",
+   "svg": "svg/landmark.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "viewpoint",
+   "label_fr": "Panorama, point de vue",
+   "label_en": "Panoramic viewpoint",
+   "category": "landmark",
+   "svg": "svg/viewpoint.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "tunnel",
+   "label_fr": "Tunnel",
+   "label_en": "Tunnel",
+   "category": "landmark",
+   "svg": "svg/tunnel.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "market",
+   "label_fr": "Marché local, souk",
+   "label_en": "Local market, souk",
+   "category": "landmark",
+   "svg": "svg/market.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "shop",
+   "label_fr": "Commerce, café, supermarché",
+   "label_en": "Shop, café, supermarket",
+   "category": "landmark",
+   "svg": "svg/shop.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "bank",
+   "label_fr": "Banque",
+   "label_en": "Bank",
+   "category": "landmark",
+   "svg": "svg/bank.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "school",
+   "label_fr": "École",
+   "label_en": "School",
+   "category": "landmark",
+   "svg": "svg/school.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "stadium",
+   "label_fr": "Stade",
+   "label_en": "Stadium",
+   "category": "landmark",
+   "svg": "svg/stadium.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "beehive",
+   "label_fr": "Ruches",
+   "label_en": "Beehives",
+   "category": "landmark",
+   "svg": "svg/beehive.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "farming",
+   "label_fr": "Cultures",
+   "label_en": "Farming fields",
+   "category": "landmark",
+   "svg": "svg/farming.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 5
+  },
+  {
+   "id": "police",
+   "label_fr": "Police",
+   "label_en": "Police",
+   "category": "service",
+   "svg": "svg/police.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 13
+  },
+  {
+   "id": "toll",
+   "label_fr": "Barrière de péage",
+   "label_en": "Toll booth",
+   "category": "service",
+   "svg": "svg/toll.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 6
+  },
+  {
+   "id": "highway",
+   "label_fr": "Autoroute",
+   "label_en": "Highway",
+   "category": "service",
+   "svg": "svg/highway.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 28
+  },
+  {
+   "id": "highway_end",
+   "label_fr": "Fin d'autoroute",
+   "label_en": "End of highway",
+   "category": "service",
+   "svg": "svg/highway_end.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 2
+  },
+  {
+   "id": "rest_area",
+   "label_fr": "Aire de repos",
+   "label_en": "Rest area",
+   "category": "service",
+   "svg": "svg/rest_area.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 7
+  },
+  {
+   "id": "fuel",
+   "label_fr": "Station carburant / ravitaillement",
+   "label_en": "Gas station / refuelling",
+   "category": "service",
+   "svg": "svg/fuel.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 44
+  },
+  {
+   "id": "medical",
+   "label_fr": "Poste médical",
+   "label_en": "Medical post",
+   "category": "service",
+   "svg": "svg/medical.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "mechanic",
+   "label_fr": "Équipe mécanique",
+   "label_en": "Mechanic team",
+   "category": "service",
+   "svg": "svg/mechanic.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 3
+  },
+  {
+   "id": "bivouac",
+   "label_fr": "Bivouac",
+   "label_en": "Bivouac",
+   "category": "service",
+   "svg": "svg/bivouac.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 5
+  },
+  {
+   "id": "bivouac_zone",
+   "label_fr": "Début zone bivouac autorisée (OK)",
+   "label_en": "Bivouac area allowed (OK)",
+   "category": "zone",
+   "svg": "svg/bivouac_zone.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 8
+  },
+  {
+   "id": "no_bivouac",
+   "label_fr": "Pas de bivouac jusqu'à la prochaine case",
+   "label_en": "No bivouac until next box",
+   "category": "zone",
+   "svg": "svg/no_bivouac.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 18
+  },
+  {
+   "id": "gate",
+   "label_fr": "Porte (porte de ville)",
+   "label_en": "Gate (town gate)",
+   "category": "landmark",
+   "svg": "svg/gate.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 1
+  },
+  {
+   "id": "children",
+   "label_fr": "Enfants",
+   "label_en": "Children",
+   "category": "danger",
+   "svg": "svg/children.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 6
+  },
+  {
+   "id": "trial",
+   "label_fr": "TRIAL / KC (passage technique)",
+   "label_en": "TRIAL / broken (technical passage)",
+   "category": "terrain",
+   "svg": "svg/trial.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 0
+  },
+  {
+   "id": "pk",
+   "label_fr": "PK – Point kilométrique",
+   "label_en": "PK – Kilometer point",
+   "category": "control",
+   "svg": "svg/pk.svg",
+   "in_official_legend": true,
+   "used_in_roadbooks": 0,
+   "abbr": "PK"
+  },
+  {
+   "id": "roundabout",
+   "label_fr": "Rond-point (giratoire)",
+   "label_en": "Roundabout",
+   "category": "navigation",
+   "svg": "svg/roundabout.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "RP",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_exit1",
+   "label_fr": "Rond-point, 1re sortie",
+   "label_en": "Roundabout, 1st exit",
+   "category": "navigation",
+   "svg": "svg/roundabout_exit1.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "RP S1",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_exit2",
+   "label_fr": "Rond-point, 2e sortie",
+   "label_en": "Roundabout, 2nd exit",
+   "category": "navigation",
+   "svg": "svg/roundabout_exit2.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "RP S2",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_exit3",
+   "label_fr": "Rond-point, 3e sortie",
+   "label_en": "Roundabout, 3rd exit",
+   "category": "navigation",
+   "svg": "svg/roundabout_exit3.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "RP S3",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_exit4",
+   "label_fr": "Rond-point, 4e sortie",
+   "label_en": "Roundabout, 4th exit",
+   "category": "navigation",
+   "svg": "svg/roundabout_exit4.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "RP S4",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_exit5",
+   "label_fr": "Rond-point, 5e sortie",
+   "label_en": "Roundabout, 5th exit",
+   "category": "navigation",
+   "svg": "svg/roundabout_exit5.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "RP S5",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_exit6",
+   "label_fr": "Rond-point, 6e sortie",
+   "label_en": "Roundabout, 6th exit",
+   "category": "navigation",
+   "svg": "svg/roundabout_exit6.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "RP S6",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_right",
+   "label_fr": "Rond-point, à droite (AD)",
+   "label_en": "Roundabout, turn right",
+   "category": "navigation",
+   "svg": "svg/roundabout_right.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 9,
+   "abbr": "RP AD",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_straight",
+   "label_fr": "Rond-point, tout droit (TD)",
+   "label_en": "Roundabout, straight on",
+   "category": "navigation",
+   "svg": "svg/roundabout_straight.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 22,
+   "abbr": "RP TD",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_left",
+   "label_fr": "Rond-point, à gauche (AG)",
+   "label_en": "Roundabout, turn left",
+   "category": "navigation",
+   "svg": "svg/roundabout_left.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 15,
+   "abbr": "RP AG",
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_uturn",
+   "label_fr": "Rond-point, demi-tour",
+   "label_en": "Roundabout, U-turn",
+   "category": "navigation",
+   "svg": "svg/roundabout_uturn.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "RP 1/2T",
+   "since": "1.1.0"
+  },
+  {
+   "id": "mini_roundabout",
+   "label_fr": "Mini rond-point (franchissable)",
+   "label_en": "Mini roundabout",
+   "category": "navigation",
+   "svg": "svg/mini_roundabout.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "double_roundabout",
+   "label_fr": "Double rond-point",
+   "label_en": "Double roundabout",
+   "category": "navigation",
+   "svg": "svg/double_roundabout.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "roundabout_sign",
+   "label_fr": "Panneau carrefour à sens giratoire",
+   "label_en": "Roundabout ahead sign",
+   "category": "sign",
+   "svg": "svg/roundabout_sign.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "dss",
+   "label_fr": "DSS – Départ secteur sélectif",
+   "label_en": "DSS – Start of selective section",
+   "category": "control",
+   "svg": "svg/dss.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "DSS",
+   "since": "1.1.0"
+  },
+  {
+   "id": "ass",
+   "label_fr": "ASS – Arrivée secteur sélectif",
+   "label_en": "ASS – End of selective section",
+   "category": "control",
+   "svg": "svg/ass.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "ASS",
+   "since": "1.1.0"
+  },
+  {
+   "id": "wpv",
+   "label_fr": "WPV – Waypoint visible",
+   "label_en": "WPV – Visible waypoint",
+   "category": "control",
+   "svg": "svg/wpv.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "WPV",
+   "since": "1.1.0"
+  },
+  {
+   "id": "wps",
+   "label_fr": "WPS – Waypoint de sécurité",
+   "label_en": "WPS – Safety waypoint",
+   "category": "control",
+   "svg": "svg/wps.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "WPS",
+   "since": "1.1.0"
+  },
+  {
+   "id": "wpe",
+   "label_fr": "WPE – Waypoint éclipse",
+   "label_en": "WPE – Eclipse waypoint",
+   "category": "control",
+   "svg": "svg/wpe.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "WPE",
+   "since": "1.1.0"
+  },
+  {
+   "id": "wpc",
+   "label_fr": "WPC – Waypoint de contrôle",
+   "label_en": "WPC – Control waypoint",
+   "category": "control",
+   "svg": "svg/wpc.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "WPC",
+   "since": "1.1.0"
+  },
+  {
+   "id": "dn",
+   "label_fr": "DN – Début de neutralisation",
+   "label_en": "DN – Start of neutralisation",
+   "category": "control",
+   "svg": "svg/dn.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "DN",
+   "since": "1.1.0"
+  },
+  {
+   "id": "fn",
+   "label_fr": "FN – Fin de neutralisation",
+   "label_en": "FN – End of neutralisation",
+   "category": "control",
+   "svg": "svg/fn.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "FN",
+   "since": "1.1.0"
+  },
+  {
+   "id": "customs",
+   "label_fr": "Douane, frontière",
+   "label_en": "Customs, border post",
+   "category": "service",
+   "svg": "svg/customs.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "give_way",
+   "label_fr": "Cédez le passage",
+   "label_en": "Give way",
+   "category": "sign",
+   "svg": "svg/give_way.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "keep_right",
+   "label_fr": "Contournement obligatoire par la droite",
+   "label_en": "Keep right",
+   "category": "sign",
+   "svg": "svg/keep_right.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "keep_left",
+   "label_fr": "Contournement obligatoire par la gauche",
+   "label_en": "Keep left",
+   "category": "sign",
+   "svg": "svg/keep_left.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "hairpin",
+   "label_fr": "Virage en épingle",
+   "label_en": "Hairpin bend",
+   "category": "sign",
+   "svg": "svg/hairpin.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "level_crossing",
+   "label_fr": "Passage à niveau",
+   "label_en": "Level crossing",
+   "category": "sign",
+   "svg": "svg/level_crossing.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "parking",
+   "label_fr": "Parking",
+   "label_en": "Parking",
+   "category": "service",
+   "svg": "svg/parking.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": "P",
+   "since": "1.1.0"
+  },
+  {
+   "id": "crest",
+   "label_fr": "Bosse aveugle, sommet sans visibilité",
+   "label_en": "Blind crest",
+   "category": "terrain",
+   "svg": "svg/crest.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "jump",
+   "label_fr": "Saut",
+   "label_en": "Jump",
+   "category": "terrain",
+   "svg": "svg/jump.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "step",
+   "label_fr": "Marche, cassure",
+   "label_en": "Step, sharp drop",
+   "category": "terrain",
+   "svg": "svg/step.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "compression",
+   "label_fr": "Compression (creux brutal)",
+   "label_en": "Compression (sharp dip)",
+   "category": "terrain",
+   "svg": "svg/compression.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "rut",
+   "label_fr": "Ornières",
+   "label_en": "Ruts",
+   "category": "terrain",
+   "svg": "svg/rut.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "mud",
+   "label_fr": "Boue, flaque",
+   "label_en": "Mud, puddle",
+   "category": "terrain",
+   "svg": "svg/mud.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "gravel",
+   "label_fr": "Gravier, piste caillouteuse fine",
+   "label_en": "Gravel",
+   "category": "terrain",
+   "svg": "svg/gravel.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "dune_crest",
+   "label_fr": "Crête de dune (cassure à l'arrière)",
+   "label_en": "Dune crest (drop behind)",
+   "category": "terrain",
+   "svg": "svg/dune_crest.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "ford",
+   "label_fr": "Gué (passage d'eau)",
+   "label_en": "Ford (water crossing)",
+   "category": "terrain",
+   "svg": "svg/ford.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "faint_track",
+   "label_fr": "Piste peu marquée",
+   "label_en": "Faint track",
+   "category": "navigation",
+   "svg": "svg/faint_track.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "railway",
+   "label_fr": "Voie ferrée",
+   "label_en": "Railway line",
+   "category": "landmark",
+   "svg": "svg/railway.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "cattle_grid",
+   "label_fr": "Grille à bétail (passage canadien)",
+   "label_en": "Cattle grid",
+   "category": "landmark",
+   "svg": "svg/cattle_grid.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "church",
+   "label_fr": "Église, chapelle",
+   "label_en": "Church, chapel",
+   "category": "landmark",
+   "svg": "svg/church.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "wreck",
+   "label_fr": "Épave (véhicule)",
+   "label_en": "Wreck (vehicle)",
+   "category": "landmark",
+   "svg": "svg/wreck.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "animals",
+   "label_fr": "Animaux, troupeau",
+   "label_en": "Animals, herd",
+   "category": "landmark",
+   "svg": "svg/animals.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "pipeline",
+   "label_fr": "Pipeline, canalisation",
+   "label_en": "Pipeline",
+   "category": "landmark",
+   "svg": "svg/pipeline.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "water_point",
+   "label_fr": "Point d'eau, robinet",
+   "label_en": "Water point, tap",
+   "category": "service",
+   "svg": "svg/water_point.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  },
+  {
+   "id": "ferry",
+   "label_fr": "Port, bac, ferry",
+   "label_en": "Port, ferry",
+   "category": "service",
+   "svg": "svg/ferry.svg",
+   "in_official_legend": false,
+   "used_in_roadbooks": 0,
+   "abbr": null,
+   "since": "1.1.0"
+  }
+ ]
+}

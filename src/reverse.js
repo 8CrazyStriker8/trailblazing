@@ -35,6 +35,11 @@ const RR_MODEL = 'claude-opus-5-5';
   #rrTable tr.bad td { background:#fff1f0; } #rrTable tr.warn td { background:#fff8e6; } #rrTable tr.ok td { background:#f1faf3; }
   #rrTable tr.sel td { background:#efe6fb; }
   #rrPrevDial svg { cursor:crosshair; display:block; }
+  .rrsym { display:inline-flex; align-items:center; margin:1px 2px 0 0; vertical-align:middle; }
+  .rrsym small { font:700 10px system-ui; margin-left:1px; }
+  #rrPrevSym .rrsym { cursor:pointer; border:1px solid #eee; border-radius:4px; padding:1px; }
+  #rrPrevSym .rrsym:hover { border-color:#d33; }
+  #rrPrevSymAdd { max-width:150px; font-size:12px; }
   .rrnum { background:#fff; color:#000; border:2px solid #000; border-radius:4px; font:700 11px/16px system-ui; padding:0 3px; white-space:nowrap; }
   .rrnum.bad { border-color:#d33; color:#d33; } .rrnum.warn { border-color:#b8860b; }
   @media (max-width:600px) { #rr { left:10px; right:10px; width:auto; max-width:none; top:60px; max-height:55%; } }`;
@@ -63,11 +68,13 @@ rrPanel.innerHTML = `
         <div id="rrPrevDial"></div>
         <div style="flex:1;min-width:0"><b id="rrPrevTitle"></b>
           <div class="muted" style="font-size:12px">Click the dial where the exit arrow points (you arrive from the bottom). Shift-click marks a side track. The centre clears the arrow.</div>
+          <div id="rrPrevNotes" class="muted" style="font-size:12px;margin-top:4px"></div>
+          <div class="row" id="rrPrevSym"></div>
           <div class="row"><button id="rrPrevBack">◂</button><button id="rrPrevNext">Next ▸</button><button id="rrPrevNextTodo" title="Next box without an arrow">Next to do ▸▸</button><button id="rrPrevClose">✕</button></div></div>
       </div>
     </div>
     <table id="rrTable"><thead><tr><th>#</th><th>Total km</th><th>Tulip</th><th>CAP</th><th>Exit on / road</th><th></th></tr></thead><tbody></tbody></table>
-    <div class="row"><button id="rrAdd">+ Box</button><button id="rrClear">Clear all</button><button id="rrSave" title="Save the boxes as a JSON file">Save</button><button id="rrLoad">Load</button><input type="file" id="rrLoadFile" accept=".json,application/json" style="display:none"></div>
+    <div class="row"><button id="rrAdd">+ Box</button><button id="rrClear">Clear all</button><button id="rrSave" title="Save the boxes as a JSON file">Save</button><button id="rrLoad" title="Open a boxes file (.json) or an OpenRally / GPX roadbook (.gpx, .xml)">Load</button><input type="file" id="rrLoadFile" accept=".json,.gpx,.xml,application/json,application/gpx+xml,application/xml,text/xml" style="display:none"></div>
   </div>
   <div class="step"><b>3. Rebuild</b>
     <div class="row"><button id="rrStartBtn">◎ Pick start on map</button><button id="rrStartPrev" style="display:none" title="Start this section where the last rebuilt route ended">◎ = last end</button><span id="rrStartTxt" class="muted"></span></div>
@@ -130,6 +137,7 @@ async function rrPreview(i) {
   RR.sel = i; $rr('rrPrev').style.display = 'block';
   $rr('rrPrevTitle').textContent = `Line ${b.n}${b.num != null ? ' (box no. ' + b.num + ' in the roadbook)' : ''}${b.km != null ? ' · ' + b.km + ' km' : ''}${b.road ? ' · ' + b.road : ''}`;
   $rr('rrPrevDial').innerHTML = rrDial(b, 120);
+  rrPrevSyms(b);
   [...$rr('rrTable').querySelectorAll('tbody tr')].forEach(tr => tr.classList.toggle('sel', +tr.dataset.i === i));
   const cv = $rr('rrPrevCv'), pg = b.src && RR.pages.find(p => p.pdfPage === b.src.page);
   if (!pg) { cv.style.display = 'none'; return; }
@@ -141,6 +149,29 @@ async function rrPreview(i) {
   cv.getContext('2d').drawImage(canvas, x0, y0, x1 - x0, y1 - y0, 0, 0, x1 - x0, y1 - y0);
   const row = $rr('rrTable').querySelector(`tr[data-i="${i}"]`); if (row) row.scrollIntoView({ block: 'nearest' });
 }
+function rrPrevSyms(b) { // the box's symbols (click one to remove it) and a list to add one
+  $rr('rrPrevNotes').textContent = b.notes || '';
+  const cats = [...new Set(TB_SYMBOLS.map(s => s.cat))];
+  $rr('rrPrevSym').innerHTML = rrSymStrip(b, 26, true) +
+    `<select id="rrPrevSymAdd" title="Add a symbol drawn in this box"><option value="">+ symbol…</option>${cats.map(c => `<optgroup label="${esc(c)}">${TB_SYMBOLS.filter(s => s.cat === c).map(s => `<option value="${s.id}">${esc(s.en)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+}
+$rr('rrPrevSym').addEventListener('click', e => {
+  const b = RR.boxes[RR.sel], el = e.target.closest('.rrsym'); if (!b || !el) return;
+  const id = b.sym[+el.dataset.sym]; b.sym.splice(+el.dataset.sym, 1);
+  if (/^danger\d$/.test(id)) b.danger = Math.max(0, ...b.sym.filter(s => /^danger\d$/.test(s)).map(s => +s.slice(-1)));
+  if (id === 'speed_limit') b.speed = null;
+  if (RR_RA_SYMS.includes(id) && b.ra) { b.ra = false; rrSyncRa(b); RR.result = null; }
+  rrSaveBoxes(); rrRender(); rrPrevSyms(b);
+});
+$rr('rrPrevSym').addEventListener('change', e => {
+  const b = RR.boxes[RR.sel], id = e.target.value; if (!b || !id) return;
+  b.sym = (b.sym || []).filter(s => s !== id);
+  if (/^danger\d$/.test(id)) { b.sym = b.sym.filter(s => !/^danger\d$/.test(s)); b.danger = +id.slice(-1); b.sym.unshift(id); }
+  else if (id === 'speed_limit') { const v = rrNum(prompt('Speed limit (km/h)?', b.speed || '') || ''); b.speed = v || null; b.sym.push(id); }
+  else if (RR_RA_SYMS.includes(id) || /^roundabout_exit\d$/.test(id)) { b.ra = true; b.sym.push(id); rrSyncRa(b); RR.result = null; }
+  else b.sym.push(id);
+  rrSaveBoxes(); rrRender(); rrPrevSyms(b);
+});
 function rrDialAngle(e, svg) {
   const r = svg.getBoundingClientRect(), dx = e.clientX - r.left - r.width / 2, dy = e.clientY - r.top - r.height / 2;
   if (dx * dx + dy * dy < (r.width / 12) ** 2) return null;
@@ -150,7 +181,7 @@ $rr('rrPrevDial').addEventListener('click', e => {
   const b = RR.boxes[RR.sel], svg = $rr('rrPrevDial').querySelector('svg'); if (!b || !svg) return;
   const a = rrDialAngle(e, svg);
   if (e.shiftKey || e.altKey) { if (a == null) return; b.branches = b.branches || []; const k = b.branches.findIndex(x => Math.abs(relAngle(x, a)) < 20); if (k >= 0) b.branches.splice(k, 1); else b.branches.push(a); }
-  else b.rel = a;
+  else { b.rel = a; if (b.ra) rrSyncRa(b); }
   RR.result = null; rrSaveBoxes(); rrRender();
   if (!(e.shiftKey || e.altKey) && a != null) rrPreview(Math.min(RR.boxes.length - 1, RR.sel + 1)); else rrPreview(RR.sel);
 });
@@ -172,6 +203,7 @@ function rrRender() {
       <td><input class="cap" data-f="cap" value="${b.cap == null ? '' : b.cap}" inputmode="numeric" placeholder="–"></td>
       <td><select data-f="surf">${SURF_OPTS.map(([v, t]) => `<option value="${v}"${(b.surf || '') === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
         <input class="road" data-f="road" value="${esc(b.road || '')}" placeholder="road" title="Road number taken at the exit (e.g. D56), from the signs in the box">
+        ${b.sym && b.sym.length ? `<div style="max-width:110px;line-height:0">${rrSymStrip(b, 15)}</div>` : ''}
         ${b.notes ? `<div class="muted" style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.notes)}">${esc(b.notes)}</div>` : ''}</td>
       <td style="white-space:nowrap"><button data-act="ra" title="Roundabout: the arrow is the exit taken"${b.ra ? ' class="on"' : ''}>⟳</button><button data-act="pin" title="${b.lock ? (b.gps ? 'GPS point from the roadbook' : 'Pinned') + ': click to unpin' : 'Pin this box to a map point'}"${b.lock ? ' class="on"' : ''}>📍</button><button data-act="ins" title="Insert a box after this one">+</button><button data-act="del" title="Delete">✕</button></td>
     </tr>`;
@@ -184,7 +216,8 @@ function rrUpdateButtons() {
   $rr('rrRun').disabled = !RR.running && (!RR.start || RR.boxes.length < 2);
   $rr('rrRun').textContent = RR.running ? 'Stop' : 'Rebuild route';
   $rr('rrRun').title = RR.running ? 'Stop the rebuild' : !RR.start ? 'Pick the start point on the map first (◎ Pick start on map)' : RR.boxes.length < 2 ? 'The roadbook needs at least 2 boxes' : '';
-  $rr('rrGpx').disabled = $rr('rrPlan').disabled = !RR.result || !RR.result.coords.length;
+  $rr('rrGpx').disabled = !RR.result || !RR.result.coords.length;
+  $rr('rrPlan').disabled = !RR.result || !RR.result.legs || !RR.result.coords.length;
 }
 const rrNum = v => { const s = String(v).replace(',', '.').trim(); if (s === '') return null; const n = parseFloat(s); return isFinite(n) ? n : null; };
 $rr('rrTable').addEventListener('change', e => {
@@ -209,12 +242,13 @@ $rr('rrTable').addEventListener('click', e => {
         if (k >= 0) b.branches.splice(k, 1); else b.branches.push(a);
       } else b.rel = a === -180 ? 180 : a;
     }
+    if (b.ra) rrSyncRa(b);
     rrSaveBoxes(); rrRender(); return;
   }
   if (e.target.closest('td') === tr.firstElementChild) { rrPreview(i); return; }
   const act = e.target.dataset.act;
   if (act === 'del') { RR.boxes.splice(i, 1); RR.result = null; }
-  else if (act === 'ra') { b.ra = !b.ra; RR.result = null; }
+  else if (act === 'ra') { b.ra = !b.ra; rrSyncRa(b); RR.result = null; }
   else if (act === 'ins') { RR.boxes.splice(i + 1, 0, { km: b.km, rel: 0, cap: null, surf: null, branches: [] }); RR.result = null; }
   else if (act === 'pin') {
     if (b.lock) { b.lock = null; b.gps = false; }
@@ -230,14 +264,40 @@ $rr('rrLoad').onclick = () => $rr('rrLoadFile').click();
 $rr('rrLoadFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
   try {
-    const j = JSON.parse(await f.text());
+    const text = await f.text();
+    if (/^\s*(\uFEFF)?\s*</.test(text)) { rrLoadXML(text, f.name); e.target.value = ''; return; }
+    const j = JSON.parse(text);
     RR.secs = j.secs ? j.secs.map(s => ({ name: s.name, boxes: s.boxes.map(rrCleanBox) })) : [{ name: 'Roadbook', boxes: (j.boxes || j).map(rrCleanBox) }];
-    RR.cur = j.cur < RR.secs.length ? j.cur : 0; RR.result = null;
+    RR.cur = j.cur < RR.secs.length ? j.cur : 0; RR.result = null; RR.layer.clearLayers();
     if (j.start) rrSetStart(L.latLng(j.start.lat ?? j.start[0], j.start.lng ?? j.start[1]));
     rrSaveBoxes(); rrRenderSecs(); rrRender(); rrDrawPins();
   } catch (err) { alert('Not a roadbook boxes file: ' + err.message); }
   e.target.value = '';
 };
+// OpenRally / GPX roadbook: its boxes (pinned to their GPS points) and, when the file has a track,
+// that track as the result, so GPX works straight away without a rebuild.
+function rrLoadXML(text, fname) {
+  let r;
+  try { r = parseRoadbookXML(text); } catch (err) { alert('Could not read this GPX / XML file: ' + err.message); return; }
+  const name = r.name || String(fname || 'Roadbook').replace(/\.(gpx|xml)$/i, '');
+  const boxes = r.boxes.map(x => rrCleanBox({ km: x.km, cap: x.cap, notes: x.notes.join(' · '), gps_lat: x.lat, gps_lon: x.lng,
+    rel: x.tb ? x.tb.rel : null, branches: x.tb && x.tb.branches ? x.tb.branches.map(y => y.rel ?? y) : [], surf: x.tb && ['road', 'track', 'path'].includes(x.tb.outSurf) ? x.tb.outSurf : null,
+    sym: x.sym.length ? x.sym : undefined, danger: x.danger, speed: x.speed }));
+  if (boxes.length && boxes[0].km == null) boxes[0].km = 0;
+  RR.secs = [{ name, boxes }]; RR.cur = 0; rrRenderSecs(); rrSelectSec(0);
+  if (r.track.length > 1) {
+    const km = r.track.reduce((a, p, k) => k ? a + map.distance(r.track[k - 1], p) : 0, 0);
+    RR.result = { coords: r.track, legs: null, total: km, boxes: boxes.map(b => ({ status: 'ok', ll: b.lock, msg: 'Position from the file.' })) };
+    RR.lastEnd = r.track[r.track.length - 1];
+    L.polyline(r.track, { renderer, color: '#fff', weight: 9, opacity: .9, interactive: false }).addTo(RR.layer);
+    L.polyline(r.track, { renderer, color: '#000', weight: 4, opacity: .85, dashArray: '10 6', interactive: false }).addTo(RR.layer);
+    map.fitBounds(L.latLngBounds(r.track), { paddingTopLeft: [window.innerWidth > 600 ? rrPanel.offsetWidth + 70 : 20, 20], paddingBottomRight: [20, 20] });
+    $rr('rrStatus').innerHTML = `Loaded <b>${esc(name)}</b>: ${boxes.length} boxes and a track of ${r.track.length} points (${fmtKm(km)}). Click <b>GPX</b> to save it; no rebuild needed.`;
+  } else {
+    $rr('rrStatus').innerHTML = `Loaded <b>${esc(name)}</b>: ${boxes.length} boxes, no track in the file. ${boxes.some(b => b.gps) ? 'Every box with a position is pinned to it. ' : ''}Pick the start and click <b>Rebuild route</b> to get the GPX.`;
+  }
+  rrSaveBoxes(); rrRender(); rrDrawPins();
+}
 function rrCleanBox(b) {
   const num = v => (v == null || v === '' || !isFinite(+v)) ? null : +v;
   const rel = num(b.rel ?? b.exit_angle);
@@ -247,7 +307,91 @@ function rrCleanBox(b) {
   const road = String(b.road ?? '').toUpperCase().replace(/\s+/g, '').slice(0, 12);
   return { km: num(b.km ?? b.total_km), road, ra: !!(b.ra ?? b.roundabout), gps: !!(b.gps || gps), num: num(b.num ?? b.number), rel: rel == null ? null : relAngle(rel, 0), cap: cap == null ? null : ((Math.round(cap) % 360) + 360) % 360,
     surf: ['road', 'track', 'path'].includes(b.surf ?? b.exit_surface) ? (b.surf ?? b.exit_surface) : null,
-    branches: (b.branches ?? b.side_tracks ?? []).map(Number).filter(isFinite), notes: b.notes ? String(b.notes).slice(0, 200) : '', lock: gps ? [lat, lon] : (b.lock || null), src: b.src || null };
+    branches: (b.branches ?? b.side_tracks ?? []).map(Number).filter(isFinite), notes: b.notes ? String(b.notes).slice(0, 200) : '', lock: gps ? [lat, lon] : (b.lock || null), src: b.src || null,
+    ...rrBoxSyms(b) };
+}
+
+// ---------- Roadbook symbols (ids from the symbol library, symbols/manifest.json) ----------
+// Each box keeps `sym` (ordered symbol ids), `danger` (0-3) and `speed` (speed-limit value), the
+// same fields as the roadbook JSON files. They come from the file, from the vision reading, or
+// failing that from the box's notes (French and English rally abbreviations).
+const rrFold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const RR_SYM_TEXT = [ // [regex on the folded notes (lower case, no accents), symbol id]
+  [/\bcpv\b/, 'cpv'], [/\bcp\s*\d*\b(?!v)/, 'cp'], [/\bcs\s*\d*\b/, 'cs'], [/\bwpm\b/, 'wpm'], [/\bwpv\b/, 'wpv'], [/\bwps\b/, 'wps'], [/\bwpe\b/, 'wpe'], [/\bwpc\b/, 'wpc'],
+  [/\bdss\b/, 'dss'], [/\bass\b/, 'ass'], [/\bdn\b|debut (de )?neutralisation/, 'dn'], [/\bfn\b|fin (de )?neutralisation/, 'fn'],
+  [/\bdz\b/, 'zone_start'], [/\bfz\b/, 'zone_end'], [/\braz\b|remise a zero/, 'raz'], [/\brayon\b/, 'radius'], [/\bdrapeau\b/, 'flag'],
+  [/\barche\b/, 'arch'], [/\bobligatoire\b|\boblig\b/, 'mandatory'], [/\bimperatif\b|\bimp\b/, 'imperative'], [/\btiming\b/, 'timing'], [/\b(ferme|ouvert|open|close)\w* (a|at) \d/, 'time'], [/\bchrono\b/, 'chrono'],
+  [/\bdanger\b|\bprudence\b|\bcaution\b/, 'caution'], [/\brlt\b|\bralenti/, 'slow'], [/\bkc\b|\bcasse/, 'kc'],
+  [/fesh/, 'fesh_fesh'], [/\bmou\b|\bsoft\b|ensabl/, 'soft_sand'], [/tranchee|\btalus\b/, 'trench'], [/\btrous?\b|\bfosses?\b/, 'hole'],
+  [/\boued\b.*\beau\b|\bgue\b|\bford\b/, 'ford'], [/\boued\b/, 'oued'], [/dos d'?ane|ralentisseur|speed bump/, 'speed_bump'], [/tole ondulee|corrugat/, 'bumpy'],
+  [/bosse aveugle|sans visibilite|blind crest/, 'crest'], [/\bbosses?\b/, 'bump'], [/cailloux|pierres|rochers|stones|\brocks?\b/, 'stones'], [/\bcairns?\b/, 'cairn'],
+  [/\bcrete\b/, 'dune_crest'], [/\bdun(es?|ettes?)\b/, 'dunes'], [/\bbuttes?\b|monticule/, 'mound'], [/montagne|collines?/, 'mountain'], [/\bcol\b/, 'pass'], [/\bsommet\b/, 'summit'],
+  [/\bmontee\b/, 'ascent'], [/\bdescente\b/, 'descent'], [/\bplat(eau|o)\b/, 'plateau'], [/vegetation|herbe|arbustes?/, 'vegetation'], [/\blac\b/, 'lake'],
+  [/\bstop\b/, 'stop'], [/\bhalte?\b/, 'halt'], [/sens interdit|no entry/, 'no_entry'], [/fin de limitation/, 'speed_end'], [/\bradar\b/, 'speed_camera'],
+  [/feux? (tricolores?|rouges?)|traffic light/, 'traffic_light'], [/sinueu|winding/, 'sign_winding'], [/\betroite?s?\b|narrow/, 'narrow'], [/\btravaux\b/, 'works'],
+  [/cedez|give way/, 'give_way'], [/passage a niveau|level crossing/, 'level_crossing'], [/voie ferree|railway|\brails?\b/, 'railway'], [/ornieres?/, 'rut'], [/\bboue\b|flaques?|\bmud\b/, 'mud'],
+  [/gravier|gravel/, 'gravel'], [/compression/, 'compression'], [/\bsaut\b|\bjump\b/, 'jump'], [/epingle|hairpin/, 'hairpin'],
+  [/\bhp\b|hors[- ]piste|off[- ]track/, 'offtrack'], [/\bpp\s*\/\//, 'parallel'], [/\bnbx\b/, 'nbx'], [/peu marquee|faint/, 'faint_track'],
+  [/\bvillage\b|\bdouar\b/, 'village'], [/\bmaisons?\b/, 'house'], [/\bcabanes?\b/, 'hut'], [/\barbres?\b/, 'tree'], [/palmier|palmeraie/, 'palm'], [/\bpuits\b/, 'well'],
+  [/\bpneus?\b/, 'tyre'], [/\bruines?\b/, 'ruins'], [/cimetiere/, 'cemetery'], [/\bmurs?\b|rempart/, 'wall'], [/barbele|cloture/, 'fence'], [/\bpont\b|\bradier\b/, 'bridge'],
+  [/lignes? electrique|poteaux|\bpotos?\b/, 'power_lines'], [/antenne|pylone/, 'antenna'], [/chateau d'?eau/, 'water_tower'], [/mosquee/, 'mosque'], [/\beglise\b|chapelle/, 'church'],
+  [/fort militaire/, 'fort'], [/\bmines?\b/, 'mine'], [/\btentes?\b/, 'tent'], [/campement/, 'camp'], [/pyramide/, 'pyramids'], [/\bfumee\b/, 'smoke'], [/\bpano\b|panneau|panonceau/, 'signpost'],
+  [/\btunnel\b/, 'tunnel'], [/\bmarche (local|hebdo)|\bsouk\b/, 'market'], [/\bcafe\b|commerce|epicerie|supermarche/, 'shop'], [/\bbanque\b/, 'bank'], [/\becole\b/, 'school'],
+  [/\bstade\b/, 'stadium'], [/\bruches?\b/, 'beehive'], [/\bcultures?\b|\bchamps?\b/, 'farming'], [/police|gendarmerie/, 'police'], [/peage|\btoll\b/, 'toll'],
+  [/autoroute|highway|motorway/, 'highway'], [/aire de repos|rest area/, 'rest_area'], [/\bstation\b|carburant|essence|gasoil|\bfuel\b/, 'fuel'], [/medic|medecin/, 'medical'],
+  [/mecani|meca\b/, 'mechanic'], [/pas de bivouac|bivouac interdit/, 'no_bivouac'], [/zone (de )?bivouac/, 'bivouac_zone'], [/bivouac/, 'bivouac'], [/\bportes?\b/, 'gate'],
+  [/enfants/, 'children'], [/douane|frontiere|border/, 'customs'], [/\bport\b|ferry|\bbac\b/, 'ferry'], [/parking/, 'parking'], [/\bepave/, 'wreck'],
+  [/troupeau|moutons|chevres|animaux|chameaux|dromadaires/, 'animals'], [/pipeline|canalisation/, 'pipeline'], [/point d'?eau|robinet|fontaine/, 'water_point'],
+  [/passage canadien|grille a betail|cattle grid/, 'cattle_grid'],
+];
+const RR_RA_SYMS = ['roundabout', 'roundabout_right', 'roundabout_straight', 'roundabout_left', 'roundabout_uturn'];
+function rrRaDirSym(rel) { // the roundabout symbol for the direction taken (relative exit angle)
+  if (rel == null) return 'roundabout';
+  const a = Math.abs(rel);
+  return a <= 30 ? 'roundabout_straight' : a >= 150 ? 'roundabout_uturn' : rel > 0 ? 'roundabout_right' : 'roundabout_left';
+}
+function rrRaExit(t) { // "2e sortie", "sortie 3", "3rd exit", "exit 2" -> 2 / 3 …
+  const m = /\b([1-6])\s*(?:e|er|re|eme|ere|st|nd|rd|th)?\s*(?:sortie|exit)\b|\b(?:sortie|exit)\s*(?:n[o°]?\s*)?([1-6])\b/.exec(t);
+  return m ? +(m[1] || m[2]) : null;
+}
+function rrSymsFromNotes(notes) { // -> { sym, danger, speed, ra, raExit } read from the notes text
+  const t = rrFold(notes), sym = [];
+  const bang = Math.min(3, Math.max(0, ...(String(notes || '').match(/!+/g) || []).map(s => s.length)));
+  if (bang) sym.push('danger' + bang);
+  for (const [re, id] of RR_SYM_TEXT) if (re.test(t) && !sym.includes(id)) sym.push(id);
+  const sp = /\b(?:max|limit\w*|vitesse)\s*(?:a\s*)?(\d{2,3})\b|\b(\d{2,3})\s*km\/h/.exec(t);
+  const speed = sp ? +(sp[1] || sp[2]) : null;
+  if (speed && !sym.includes('speed_limit')) sym.push('speed_limit');
+  const ra = /rond[- ]?point|giratoire|roundabout|\brp\b/.test(t);
+  return { sym, danger: bang, speed, ra, raExit: ra ? rrRaExit(t) : null };
+}
+function rrBoxSyms(b) { // symbols of a raw box (file, vision reading or text reading)
+  const known = id => TB_SYM.has(id);
+  let sym = Array.isArray(b.sym) ? b.sym.filter(known) : Array.isArray(b.symbols) ? b.symbols.filter(known) : null;
+  let danger = Number.isInteger(+b.danger) ? Math.max(0, Math.min(3, +b.danger)) : 0;
+  let speed = b.speed ?? b.speed_limit; speed = speed == null || !isFinite(+speed) || +speed <= 0 ? null : +speed;
+  const fromNotes = rrSymsFromNotes(b.notes);
+  if (!sym) { sym = fromNotes.sym; danger = Math.max(danger, fromNotes.danger); if (speed == null) speed = fromNotes.speed; } // no symbol list: read the notes
+  sym = [...new Set(sym)];
+  const lvl = Math.max(danger, ...sym.map(s => /^danger([123])$/.exec(s)).filter(Boolean).map(m => +m[1]));
+  if (lvl && !sym.includes('danger' + lvl)) sym.unshift('danger' + lvl);
+  if (speed != null && !sym.includes('speed_limit')) sym.push('speed_limit');
+  const out = { sym, danger: lvl, speed };
+  const ra = !!(b.ra ?? b.roundabout ?? fromNotes.ra); out.ra = ra;
+  const exitN = +(b.roundabout_exit ?? b.raExit ?? fromNotes.raExit) || null;
+  const rel = b.rel ?? b.exit_angle;
+  if (ra) rrSyncRa({ ra, rel: rel == null || !isFinite(+rel) ? null : relAngle(+rel, 0) }, exitN, out);
+  return out;
+}
+function rrSyncRa(b, exitN = null, into = b) { // keep the roundabout symbols in step with the ⟳ flag and the exit arrow
+  let sym = (into.sym || []).filter(s => !RR_RA_SYMS.includes(s));
+  if (exitN == null) { const k = sym.find(s => /^roundabout_exit\d$/.test(s)); exitN = k ? +k.slice(-1) : null; }
+  sym = sym.filter(s => !/^roundabout_exit\d$/.test(s));
+  if (b.ra) { const add = [rrRaDirSym(b.rel)]; if (exitN >= 1 && exitN <= 6) add.push('roundabout_exit' + exitN); sym = add.concat(sym); }
+  into.sym = sym;
+}
+function rrSymStrip(b, size = 16, removable = false) {
+  return (b.sym || []).map((id, k) => `<span class="rrsym" data-sym="${k}"${removable ? ' title="Click to remove"' : ''}>${tbSymSVG(id, size)}${id === 'speed_limit' && b.speed ? `<small>${b.speed}</small>` : ''}</span>`).join('');
 }
 
 // ---------- Start point and pins ----------
@@ -343,19 +487,23 @@ const RR_SCHEMA = {
     section: { type: 'string' },
     boxes: { type: 'array', items: {
       type: 'object', additionalProperties: false,
-      required: ['number', 'total_km', 'exit_angle', 'side_tracks', 'roundabout', 'cap', 'exit_surface', 'road', 'gps_lat', 'gps_lon', 'notes', 'confidence'],
+      required: ['number', 'total_km', 'exit_angle', 'side_tracks', 'roundabout', 'roundabout_exit', 'cap', 'exit_surface', 'road', 'gps_lat', 'gps_lon', 'notes', 'symbols', 'danger', 'speed_limit', 'confidence'],
       properties: {
         number: { type: ['integer', 'null'] },
         total_km: { type: ['number', 'null'] },
         exit_angle: { type: ['number', 'null'] },
         side_tracks: { type: 'array', items: { type: 'number' } },
         roundabout: { type: 'boolean' },
+        roundabout_exit: { type: ['integer', 'null'] },
         cap: { type: ['number', 'null'] },
         exit_surface: { type: 'string', enum: ['road', 'track', 'path', 'unknown'] },
         road: { type: 'string' },
         gps_lat: { type: ['number', 'null'] },
         gps_lon: { type: ['number', 'null'] },
         notes: { type: 'string' },
+        symbols: { type: 'array', items: { type: 'string', enum: TB_SYMBOLS.map(s => s.id) } },
+        danger: { type: 'integer', enum: [0, 1, 2, 3] },
+        speed_limit: { type: ['number', 'null'] },
         confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
       } } },
   },
@@ -371,12 +519,18 @@ For each box:
 - total_km: the cumulative distance from the start of the section, in km. In most French roadbooks it is the "Total" column on the left. Do NOT use the partial ("Partiel") distance, and do NOT use a distance-remaining column ("Total dégressif", on the right, decreasing). Read all decimals (e.g. 3.046). A comma is a decimal point. null if the box has no distance (e.g. a podium or "parc fermé" box before the 0).
 - exit_angle: the direction of the exit arrow in the tulip, in degrees relative to the way you arrive. You arrive from the bottom of the tulip (the dot or ball is where you come from). 0 = straight on, +90 = turn right, -90 = turn left, +45 = bear right, -135 = sharp left, 180 = U-turn. Measure the direction of the arrow where it leaves the junction. For a roundabout, give the direction of the exit you take relative to the way you came in (straight across = 0, first exit on the right ≈ +90, third exit ≈ -90). For the first box of a section, give the arrow direction relative to straight up.
 - side_tracks: angles, same convention, of the other roads or tracks drawn at the junction that you do not take. Empty list if none.
-- roundabout: true if the junction is a roundabout (circle drawn in the tulip).
+- roundabout: true if the junction is a roundabout (circle drawn in the tulip, or "rond-point", "giratoire", "RP" written).
+- roundabout_exit: for a roundabout, the number of the exit you take, counting the exits met going round anticlockwise from your entry (right-hand traffic: the first exit is the first road on your right), if it is printed (e.g. "2e sortie", a number in the circle) or clear from the drawing; else null.
 - cap: the heading (CAP) if written in the box, in degrees, else null.
 - exit_surface: what the exit line looks like: "road" (thick solid line), "track" (dashed), "path" (dotted or thin), else "unknown".
 - road: the road number you take at the exit, from a sign or label in the box (e.g. "D56", "N7", "C3"), else "". Only a road number, not a place name.
 - gps_lat, gps_lon: GPS coordinates if printed in the box, converted to decimal degrees (e.g. "45.92037 5.84441" -> 45.92037 and 5.84441; "N45°55.222 E5°50.664" -> 45.92037, 5.84440), else null.
 - notes: short text from the box: town names on signs, instructions ("Attention sans indication", "CH 1-3", "Début ES"), symbols (stop, give way, danger, village), else "".
+- symbols: the ids of every symbol drawn or written in the box (tulip and notes column), in reading order, from this list (id: meaning):
+${TB_SYMBOLS.map(s => `${s.id}: ${s.en}${s.abbr ? ' [' + s.abbr + ']' : ''}`).join('; ')}.
+  For a roundabout add the direction symbol (roundabout_right / roundabout_straight / roundabout_left / roundabout_uturn) and roundabout_exit1…6 when the exit number is known. Numbered markers (CP3, CS14, flag no. 6, radius 50 m) keep their number in notes. Use danger1 / danger2 / danger3 for ! / !! / !!!. Empty list if none.
+- danger: 0, or 1 to 3 for the highest danger mark (! / !! / !!!).
+- speed_limit: the value of a speed-limit sign in the box (km/h), else null.
 - confidence: how sure you are of the distance and the angle.
 
 Some roadbooks are read from the bottom of the page to the top, or in several columns: use the box numbers and the increasing distances to return the boxes in driving order. Do not invent boxes you cannot see; if a value is unreadable, use null.`;
@@ -904,7 +1058,7 @@ function rrShow(best, secs) {
 $rr('rrGpx').onclick = () => {
   const r = RR.result; if (!r) return;
   const x = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const wpts = r.boxes.map((b, i) => b.ll ? `<wpt lat="${b.ll[0].toFixed(7)}" lon="${b.ll[1].toFixed(7)}"><name>${i + 1}</name><desc>${x(`${RR.boxes[i].km != null ? RR.boxes[i].km.toFixed(2) + ' km' : ''} ${RR.boxes[i].notes || ''}`.trim())}</desc></wpt>` : '').filter(Boolean).join('\n');
+  const wpts = r.boxes.map((b, i) => b.ll ? `<wpt lat="${b.ll[0].toFixed(7)}" lon="${b.ll[1].toFixed(7)}"><name>${i + 1}</name><desc>${x(`${RR.boxes[i].km != null ? RR.boxes[i].km.toFixed(2) + ' km' : ''} ${RR.boxes[i].notes || ''}`.trim())}</desc>${RR.boxes[i].sym && RR.boxes[i].sym.length ? `<type>${x(RR.boxes[i].sym.join(' '))}</type>` : ''}</wpt>` : '').filter(Boolean).join('\n');
   const pts = r.coords.map(p => `<trkpt lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}"/>`).join('\n');
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="TrailBlazing reverse roadbook" xmlns="http://www.topografix.com/GPX/1/1">\n${wpts}\n<trk><name>${x(RR.secs[RR.cur].name || 'Rebuilt from roadbook')}</name><trkseg>\n${pts}\n</trkseg></trk>\n</gpx>\n`;
   downloadBlob(new Blob([gpx], { type: 'application/gpx+xml' }), `roadbook-${(RR.secs[RR.cur].name || 'rebuilt').normalize('NFD').replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'rebuilt'}.gpx`);
