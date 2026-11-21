@@ -79,7 +79,8 @@ function rrApCandidates(ref, feats) {
     const sim = Math.max(...f.names.map(n => rrNameSim(ref.name, n)));
     if (sim < 0.78) continue;
     let R = null, q = 0;
-    if (f.type === 'junction') R = ref.kind === 'exit' ? 900 : ref.kind === 'toll' ? 2500 : ref.kind === 'rest' && f.names.some(n => /aire|service|repos/i.test(n)) ? 900 : null;
+    const isArea = f.names.some(n => /\b(aire|service|services|repos|rest area)\b/i.test(n));
+    if (f.type === 'junction') R = isArea && ref.kind !== 'rest' ? null : ref.kind === 'exit' ? 900 : ref.kind === 'toll' ? 2500 : ref.kind === 'rest' && f.names.some(n => /aire|service|repos/i.test(n)) ? 900 : null;
     else if (f.type === 'toll') R = ref.kind === 'toll' ? 700 : null;
     else if (f.type === 'services') R = ref.kind === 'rest' ? 900 : null;
     else if (f.type === 'place') {
@@ -238,12 +239,24 @@ async function rrLoadCorridor(onProgress) {
     segs.push({ a, z, bb: [Math.min(a.ll[0], z.ll[0]) - pad, Math.min(a.ll[1], z.ll[1]) - pad * 1.2, Math.max(a.ll[0], z.ll[0]) + pad, Math.max(a.ll[1], z.ll[1]) + pad * 1.2] });
   }
   if (!segs.length) return 0;
-  onProgress(`Loading the main roads along the route (${segs.length} section${segs.length > 1 ? 's' : ''})…`);
-  const parts = segs.map(s => `way["highway"~"^(motorway|trunk|primary|secondary)(_link)?$"](${s.bb.map(v => v.toFixed(4)).join(',')});`).join('');
-  let j;
-  try { j = await rrOverpass(`[out:json][timeout:180];(${parts});out tags geom;`, 200000); }
-  catch (err) { return 0; } // fall back to loading cell by cell
-  addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
+  // a few sections per request: one request for a whole stage is refused by busy servers
+  const groups = []; let g = null;
+  for (const sg of segs) {
+    const area = (sg.bb[2] - sg.bb[0]) * (sg.bb[3] - sg.bb[1]);
+    if (!g || g.area + area > 0.5 || g.segs.length >= 6) groups.push(g = { segs: [], area: 0 });
+    g.segs.push(sg); g.area += area;
+  }
+  const ok = [];
+  for (let k = 0; k < groups.length; k++) {
+    onProgress(`Loading the main roads along the route (${k + 1} of ${groups.length})…`);
+    const parts = groups[k].segs.map(s => `way["highway"~"^(motorway|trunk|primary|secondary)(_link)?$"](${s.bb.map(v => v.toFixed(4)).join(',')});`).join('');
+    try {
+      const j = await rrOverpass(`[out:json][timeout:90];(${parts});out tags geom;`, 100000);
+      addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
+      ok.push(...groups[k].segs);
+    } catch (err) { /* those sections load cell by cell */ }
+  }
+  segs.length = 0; segs.push(...ok);
   // mark the cells of these sections as loaded, except around the start, the towns pinned and the roundabouts
   const S = RR_OSM_CELL, keep = [st, ...boxes.filter(b => b.lock && (!b.lockAuto || /place|town|city|village/.test(b.apLabel || ''))).map(b => b.lock)];
   let n = 0;

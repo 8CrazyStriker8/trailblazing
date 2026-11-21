@@ -771,7 +771,7 @@ function rrBack(path, d) { // node about d metres back along a walk (array of no
 const RR_OSM_CELL = 0.02, rrOsmState = new Map(); // key -> 'loading' | 'done' | 'error'
 const RR_SRC = {
   ign: { name: 'IGN', size: () => CELL, state: k => cells.get(k), load: list => requestCells(list), batch: 48 },
-  osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => rrOsmState.get(k), load: list => Promise.all(list.map(([k, c]) => rrOsmLoad(k, c))), batch: 12 },
+  osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => rrOsmState.get(k), load: list => rrOsmLoadMany(list), batch: 12 },
 };
 function rrCellsAround(ll, missing, src, r = 0.004) { // note unloaded data cells within ~r degrees of a point
   const S = src.size();
@@ -799,23 +799,39 @@ function rrOsmFeature(el) {
       nom_collaboratif_gauche: t.name || '', cpx_numero: t.ref || '', osm_highway: t.highway, osm_surface: t.surface || '', osm_tracktype: t.tracktype || '',
       osm_access: [t.access, t.motor_vehicle && 'motor_vehicle=' + t.motor_vehicle].filter(Boolean).join(' ') } };
 }
-function rrOsmLoad(key, c) {
-  if (rrOsmState.get(key) === 'done') return Promise.resolve();
-  rrOsmState.set(key, 'loading');
+// neighbouring cells are fetched together (one Overpass request per ~0.1° block instead of one per cell)
+function rrOsmLoadMany(list) {
+  const todo = list.filter(([k]) => rrOsmState.get(k) !== 'done'), groups = [];
+  for (const [k, c] of todo) {
+    const g = groups.find(g => Math.max(g.bb[2], c[2]) - Math.min(g.bb[0], c[0]) <= 0.1 && Math.max(g.bb[3], c[3]) - Math.min(g.bb[1], c[1]) <= 0.12);
+    if (g) { g.keys.push(k); g.bb = [Math.min(g.bb[0], c[0]), Math.min(g.bb[1], c[1]), Math.max(g.bb[2], c[2]), Math.max(g.bb[3], c[3])]; }
+    else groups.push({ keys: [k], bb: c.slice() });
+  }
+  return Promise.all(groups.map(g => g.keys.length === 1 ? rrOsmLoad(g.keys[0], g.bb) : rrOsmLoad(g.keys, g.bb)));
+}
+function rrOsmLoad(key, c) { return rrOsmLoadKeys(Array.isArray(key) ? key : [key], c); } // key: a cell, or the cells of a block c
+function rrOsmLoadKeys(keys, c) {
+  keys = keys.filter(k => rrOsmState.get(k) !== 'done');
+  if (!keys.length) return Promise.resolve();
+  const set = st => keys.forEach(k => rrOsmState.set(k, st));
+  set('loading');
   const [s, w, n, e] = c.map(v => v.toFixed(5));
-  const q = `[out:json][timeout:60];way["highway"](${s},${w},${n},${e});out tags geom;`;
+  const q = `[out:json][timeout:90];way["highway"](${s},${w},${n},${e});out tags geom;`;
   const run = async () => {
     let lastErr;
-    for (const url of OVERPASS) {
-      try {
-        const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 75000);
-        if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
-        const j = await r.json();
-        addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
-        rrOsmState.set(key, 'done'); return;
-      } catch (err) { lastErr = err; }
+    for (let round = 0; round < 2; round++) {
+      if (round) await new Promise(r => setTimeout(r, 8000)); // busy servers (429/502/504) often answer a few seconds later
+      for (const url of OVERPASS) {
+        try {
+          const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 75000);
+          if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
+          const j = await r.json();
+          addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
+          set('done'); return;
+        } catch (err) { lastErr = err; }
+      }
     }
-    rrOsmState.set(key, 'error'); throw lastErr;
+    set('error'); throw lastErr;
   };
   const pr = overpassBusy.then(run, run); // one Overpass request at a time, shared with the access check (fair use)
   overpassBusy = pr.catch(() => {});
