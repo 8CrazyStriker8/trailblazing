@@ -94,8 +94,8 @@ function rrApCandidates(ref, feats) {
 }
 // choose at most one candidate per box so that consecutive pins are compatible with the distances
 // boxes: [{i, km, cands}], start: [lat, lng]. Returns Map(i -> cand).
-function rrApChoose(start, items, hav) {
-  const nodes = [{ i: -1, km: 0, c: { ll: start, R: 50, cost: 0 }, score: 0, prev: null }];
+function rrApChoose(start, items, hav, startKm = 0) {
+  const nodes = [{ i: -1, km: startKm, c: { ll: start, R: 50, cost: 0 }, score: 0, prev: null }];
   for (const it of items) for (const c of it.cands) {
     let best = null;
     for (const p of nodes) {
@@ -115,14 +115,15 @@ function rrApChoose(start, items, hav) {
 }
 
 // ---------- network part ----------
-async function rrOverpass(q, ms = 150000) {
+async function rrOverpassText(q, ms = 120000) { return rrOverpass(q, ms, true); }
+async function rrOverpass(q, ms = 150000, text = false) {
   const run = async () => {
     let lastErr;
     for (const url of OVERPASS) {
       try {
         const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, ms);
         if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
-        return await r.json();
+        return text ? await r.text() : await r.json();
       } catch (err) { lastErr = err; }
     }
     throw lastErr;
@@ -134,42 +135,56 @@ async function rrOverpass(q, ms = 150000) {
 const rrApRegex = names => [...new Set(names.flatMap(n => rrFoldName(n).split(' ')).filter(w => w.length >= 4 && !RR_AP_STOP.has(w)))]
   .map(w => w.replace(/[aeiou]/g, c => ({ a: '[aàáâä]', e: '[eéèêë]', i: '[iíìîï]', o: '[oóòôö]', u: '[uúùûü]' }[c])).replace(/([bcdfghjklmnpqrstvwxyz])/g, '$1+'))
   .join('|');
-function rrApFeature(el) {
-  const t = el.tags || {}, lat = el.lat ?? (el.center && el.center.lat), lon = el.lon ?? (el.center && el.center.lon);
-  if (lat == null) return null;
-  const names = [t.name, t['name:fr'], t['name:en'], t.alt_name, t.official_name, t.old_name].filter(Boolean);
-  if (!names.length) return null;
-  const type = t.highway === 'motorway_junction' ? 'junction' : t.barrier === 'toll_booth' ? 'toll' : (t.highway === 'services' || t.highway === 'rest_area') ? 'services' : t.place ? 'place' : null;
-  return type && { type, place: t.place, names, ll: [lat, lon] };
+// one row of the CSV answer: type lat lon name name:fr name:en highway barrier place
+function rrApRow(line) {
+  const [, lat, lon, ...f] = line.split('\t'); const [name, fr, en, hw, barrier, place] = f;
+  const names = [name, fr, en].filter(Boolean); if (!names.length || !lat) return null;
+  const type = hw === 'motorway_junction' ? 'junction' : barrier === 'toll_booth' ? 'toll' : (hw === 'services' || hw === 'rest_area') ? 'services' : place ? 'place' : null;
+  return type && { type, place, names, ll: [+lat, +lon] };
 }
-// sets box.lock/lockR/lockAuto on the boxes it can place and box.avoid on boxes naming the branch not taken
+async function rrApFetch(bbox, re) {
+  const bb = bbox.map(v => v.toFixed(4)).join(','), pl = '["place"~"^(city|town|village|suburb|hamlet)$"]';
+  const q = `[out:csv(::type,::lat,::lon,name,"name:fr","name:en",highway,barrier,place;false;"\\t")][timeout:90];` +
+    `(node["highway"="motorway_junction"]["name"](${bb});node["barrier"="toll_booth"]["name"](${bb});nwr["highway"~"^(services|rest_area)$"]["name"](${bb});` +
+    (re ? `node${pl}["name"~"${re}",i](${bb});node${pl}["name:fr"~"${re}",i](${bb});` : '') + ');out center;';
+  const r = await rrOverpassText(q);
+  return r.split('\n').map(rrApRow).filter(Boolean);
+}
+// sets box.lock/lockR/lockAuto on the boxes it can place and box.avoid on boxes naming the branch not taken.
+// The lookup walks along the roadbook ~120 km at a time from the last pin found, so each OpenStreetMap
+// request covers a small area (one request over a whole 500 km stage times out).
 async function rrAutoPins(onProgress) {
-  const boxes = RR.boxes;
+  const boxes = RR.boxes, W = 120;
   for (const b of boxes) { if (b.lockAuto) { b.lock = null; b.lockR = null; b.lockAuto = null; } b.avoid = null; b.apLabel = null; }
   const refs = boxes.map(b => rrPlaceRefs(b.notes));
-  const names = refs.flatMap(r => [...r.pins.map(p => p.name), ...r.avoid]);
-  if (!names.length || !RR.start) return { pinned: 0, avoid: 0 };
-  const total = Math.max(...boxes.map(b => b.km || 0));
-  const st = [RR.start.lat, RR.start.lng], dLat = Math.min(6, total / 111 + 0.1), dLon = Math.min(8, dLat / Math.cos(st[0] * Math.PI / 180));
-  const bb = [st[0] - dLat, st[1] - dLon, st[0] + dLat, st[1] + dLon].map(v => v.toFixed(4)).join(',');
-  const re = rrApRegex(names);
-  onProgress('Looking up the exits, tolls and towns named in the notes on OpenStreetMap…');
-  const q = `[out:json][timeout:120];(node["highway"="motorway_junction"](${bb});node["barrier"="toll_booth"](${bb});nwr["highway"~"^(services|rest_area)$"](${bb});` +
-    (re ? `node["place"~"^(city|town|village|suburb|hamlet)$"]["name"~"${re}",i](${bb});node["place"~"^(city|town|village|suburb|hamlet)$"]["name:fr"~"${re}",i](${bb});` : '') + ');out tags center;';
-  let feats;
-  try { feats = ((await rrOverpass(q)).elements || []).map(rrApFeature).filter(Boolean); }
-  catch (err) { onProgress('Could not reach OpenStreetMap for the auto-pins: rebuilding without them.'); return { pinned: 0, avoid: 0, error: err.message }; }
-  const items = [];
-  boxes.forEach((b, i) => {
-    if (i === 0 || b.km == null || b.lock) return; // a pin you placed (or a GPS point) wins
-    const cands = refs[i].pins.flatMap(r => rrApCandidates(r, feats));
-    if (cands.length) items.push({ i, km: b.km, cands });
-  });
-  // the pins you placed yourself are fixed points of the chain
-  const fixed = boxes.map((b, i) => b.lock && i > 0 && b.km != null ? { i, km: b.km, cands: [{ ll: b.lock, R: b.lockR || 120, cost: -100, label: 'your pin' }] } : null).filter(Boolean);
-  const chosen = rrApChoose(st, [...items, ...fixed].sort((a, b) => a.i - b.i), hav);
-  let pinned = 0;
-  for (const [i, c] of chosen) { const b = boxes[i]; if (b.lock) continue; b.lock = c.ll; b.lockR = c.R; b.lockAuto = true; b.apLabel = c.label; pinned++; }
+  if (!RR.start || !refs.some(r => r.pins.length || r.avoid.length)) return { pinned: 0, avoid: 0 };
+  const st = [RR.start.lat, RR.start.lng];
+  const idx = boxes.map((b, i) => i).filter(i => i > 0 && boxes[i].km != null && (refs[i].pins.length || refs[i].avoid.length || boxes[i].lock));
+  const feats = [], seen = new Set();
+  let anchor = { km: 0, ll: st }, k = 0, pinned = 0, fails = 0;
+  while (k < idx.length) {
+    const from = boxes[idx[k]].km, win = []; let j = k;
+    while (j < idx.length && boxes[idx[j]].km <= Math.max(from, anchor.km) + W) win.push(idx[j++]);
+    const reach = (boxes[win[win.length - 1]].km - anchor.km) * 1000 + 5000; // nothing in the window can be farther than this from the anchor
+    const dLat = reach / 111320, dLon = dLat / Math.cos(anchor.ll[0] * Math.PI / 180);
+    onProgress(`Looking up the exits, tolls and towns named in boxes ${idx[k] + 1}–${win[win.length - 1] + 1} on OpenStreetMap…`);
+    const names = win.flatMap(i => [...refs[i].pins.map(p => p.name), ...refs[i].avoid]);
+    try {
+      for (const f of await rrApFetch([anchor.ll[0] - dLat, anchor.ll[1] - dLon, anchor.ll[0] + dLat, anchor.ll[1] + dLon], rrApRegex(names))) {
+        const key = f.type + f.ll.join(); if (!seen.has(key)) { seen.add(key); feats.push(f); }
+      }
+    } catch (err) { if (++fails >= 2) { onProgress('OpenStreetMap did not answer: rebuilding with the pins found so far.'); break; } continue; }
+    const items = win.map(i => boxes[i].lock && !boxes[i].lockAuto
+      ? { i, km: boxes[i].km, cands: [{ ll: boxes[i].lock, R: boxes[i].lockR || 120, cost: -100, label: 'your pin' }] } // your own pins are fixed points
+      : { i, km: boxes[i].km, cands: refs[i].pins.flatMap(r => rrApCandidates(r, feats)) }).filter(it => it.cands.length);
+    const chosen = rrApChoose(anchor.ll, items, hav, anchor.km);
+    for (const [i, c] of chosen) {
+      const b = boxes[i];
+      if (!b.lock) { b.lock = c.ll; b.lockR = c.R; b.lockAuto = true; b.apLabel = c.label; pinned++; }
+      if (b.km >= anchor.km) anchor = { km: b.km, ll: b.lock };
+    }
+    k = j;
+  }
   // the branch not taken: the place of that name nearest to where the box should be (between its neighbouring pins)
   const anchors = [{ km: 0, ll: st }, ...boxes.map(b => b.lock && b.km != null ? { km: b.km, ll: b.lock } : null).filter(Boolean)].sort((a, b) => a.km - b.km);
   const guess = km => {
@@ -189,7 +204,7 @@ async function rrAutoPins(onProgress) {
     }
     if (av.length) { b.avoid = av; nAvoid++; }
   });
-  return { pinned, avoid: nAvoid, chosen };
+  return { pinned, avoid: nAvoid, error: fails >= 2 ? 'Overpass' : null };
 }
 // avoid penalty for a state standing at node ll at box km: heading for the branch not taken costs
 function rrAvoidCost(av, ll, km) {
@@ -238,4 +253,4 @@ async function rrLoadCorridor(onProgress) {
   }
   return n;
 }
-if (typeof module !== 'undefined') module.exports = { rrPlaceRefs, rrNameSim, rrFoldName, rrApCandidates, rrApChoose, rrApRegex };
+if (typeof module !== 'undefined') module.exports = { rrPlaceRefs, rrNameSim, rrFoldName, rrApCandidates, rrApChoose, rrApRegex, rrApRow };
