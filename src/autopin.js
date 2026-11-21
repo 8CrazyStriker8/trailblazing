@@ -115,16 +115,20 @@ function rrApChoose(start, items, hav, startKm = 0) {
 }
 
 // ---------- network part ----------
-async function rrOverpassText(q, ms = 120000) { return rrOverpass(q, ms, true); }
+async function rrOverpassText(q, ms = 75000) { return rrOverpass(q, ms, true); }
 async function rrOverpass(q, ms = 150000, text = false) {
+  // the public servers often answer 429/502/504 for a minute when busy: try each, then again after a pause
   const run = async () => {
     let lastErr;
-    for (const url of OVERPASS) {
-      try {
-        const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, ms);
-        if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
-        return text ? await r.text() : await r.json();
-      } catch (err) { lastErr = err; }
+    for (let round = 0; round < 3; round++) {
+      if (round) await new Promise(r => setTimeout(r, 10000 * round));
+      for (const url of OVERPASS) {
+        try {
+          const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, ms);
+          if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
+          return text ? await r.text() : await r.json();
+        } catch (err) { lastErr = err; }
+      }
     }
     throw lastErr;
   };
@@ -173,7 +177,7 @@ async function rrAutoPins(onProgress) {
       for (const f of await rrApFetch([anchor.ll[0] - dLat, anchor.ll[1] - dLon, anchor.ll[0] + dLat, anchor.ll[1] + dLon], rrApRegex(names))) {
         const key = f.type + f.ll.join(); if (!seen.has(key)) { seen.add(key); feats.push(f); }
       }
-    } catch (err) { if (++fails >= 2) { onProgress('OpenStreetMap did not answer: rebuilding with the pins found so far.'); break; } continue; }
+    } catch (err) { if (++fails >= 2) { onProgress('OpenStreetMap did not answer: rebuilding with the pins found so far.'); break; } k = j; continue; }
     const items = win.map(i => boxes[i].lock && !boxes[i].lockAuto
       ? { i, km: boxes[i].km, cands: [{ ll: boxes[i].lock, R: boxes[i].lockR || 120, cost: -100, label: 'your pin' }] } // your own pins are fixed points
       : { i, km: boxes[i].km, cands: refs[i].pins.flatMap(r => rrApCandidates(r, feats)) }).filter(it => it.cands.length);
