@@ -83,6 +83,7 @@ rrPanel.innerHTML = `
       <select id="rrSrc" title="Road and track data"><option value="auto">Map data: auto (IGN in France, else OSM)</option><option value="ign">IGN BD TOPO (France)</option><option value="osm">OpenStreetMap (anywhere)</option></select>
       <label class="muted" title="How far your trip meter may differ from the roadbook">± <input type="text" id="rrTol" value="10" style="width:32px;flex:none"> % distance</label>
     </div>
+    <div class="row"><label class="muted" title="Before rebuilding, look up on OpenStreetMap the exits, tolls, rest areas and towns named in the notes, and pin the boxes that name them (no AI). Your own pins are kept. Notes like '(Itzer à droite)' or 'pas Ifrane à gauche' steer the route away from that branch."><input type="checkbox" id="rrAuto" checked style="width:auto;flex:none"> Auto-pin the exits, tolls and towns named in the notes</label></div>
     <div class="row"><button id="rrRun" class="on" disabled>Rebuild route</button><button id="rrGpx" disabled>GPX</button><button id="rrPlan" disabled title="Open in the trip planner (roadbook PDF / OpenRally export)">To planner</button></div>
     <div id="rrStatus" class="muted"></div>
   </div>`;
@@ -205,7 +206,7 @@ function rrRender() {
         <input class="road" data-f="road" value="${esc(b.road || '')}" placeholder="road" title="Road number taken at the exit (e.g. D56), from the signs in the box">
         ${b.sym && b.sym.length ? `<div style="max-width:110px;line-height:0">${rrSymStrip(b, 18)}</div>` : ''}
         ${b.notes ? `<div class="muted" style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.notes)}">${esc(b.notes)}</div>` : ''}</td>
-      <td style="white-space:nowrap"><button data-act="ra" title="Roundabout: the arrow is the exit taken"${b.ra ? ' class="on"' : ''}>⟳</button><button data-act="pin" title="${b.lock ? (b.gps ? 'GPS point from the roadbook' : 'Pinned') + ': click to unpin' : 'Pin this box to a map point'}"${b.lock ? ' class="on"' : ''}>📍</button><button data-act="ins" title="Insert a box after this one">+</button><button data-act="del" title="Delete">✕</button></td>
+      <td style="white-space:nowrap"><button data-act="ra" title="Roundabout: the arrow is the exit taken"${b.ra ? ' class="on"' : ''}>⟳</button><button data-act="pin" title="${b.lock ? (b.gps ? 'GPS point from the roadbook' : b.lockAuto ? 'Auto-pinned on ' + esc(b.apLabel || 'OpenStreetMap') + ', within ' + Math.round((b.lockR || 0) / 100) / 10 + ' km. Rebuild again to recompute, or click to pin it yourself' : 'Pinned') + (b.lockAuto ? '' : ': click to unpin') : 'Pin this box to a map point'}"${b.lock ? ` class="on"${b.lockAuto ? ' style="opacity:.6"' : ''}` : ''}>📍</button><button data-act="ins" title="Insert a box after this one">+</button><button data-act="del" title="Delete">✕</button></td>
     </tr>`;
   }).join('');
   rrUpdateButtons();
@@ -251,7 +252,8 @@ $rr('rrTable').addEventListener('click', e => {
   else if (act === 'ra') { b.ra = !b.ra; rrSyncRa(b); RR.result = null; }
   else if (act === 'ins') { RR.boxes.splice(i + 1, 0, { km: b.km, rel: 0, cap: null, surf: null, branches: [] }); RR.result = null; }
   else if (act === 'pin') {
-    if (b.lock) { b.lock = null; b.gps = false; }
+    if (b.lock && !b.lockAuto) { b.lock = null; b.gps = false; }
+    else if (b.lockAuto) { b.lock = null; b.lockAuto = null; b.lockR = null; RR.picking = i; map.getContainer().style.cursor = 'crosshair'; $rr('rrStatus').textContent = `Click the map where box ${b.n} is.`; }
     else { RR.picking = i; map.getContainer().style.cursor = 'crosshair'; $rr('rrStatus').textContent = `Click the map where box ${b.n} is.`; }
   } else if (RR.result && RR.result.boxes[i] && RR.result.boxes[i].ll) { map.setView(RR.result.boxes[i].ll, Math.max(map.getZoom(), 16)); return; }
   else return;
@@ -407,13 +409,13 @@ $rr('rrStartBtn').onclick = () => { RR.picking = 'start'; map.getContainer().sty
 map.on('click', e => {
   if (RR.picking == null) return;
   if (RR.picking === 'start') rrSetStart(e.latlng);
-  else { const b = RR.boxes[RR.picking]; if (b) { b.lock = [e.latlng.lat, e.latlng.lng]; rrSaveBoxes(); rrRender(); rrDrawPins(); } }
+  else { const b = RR.boxes[RR.picking]; if (b) { b.lock = [e.latlng.lat, e.latlng.lng]; b.lockR = null; b.lockAuto = null; rrSaveBoxes(); rrRender(); rrDrawPins(); } }
   RR.picking = null; map.getContainer().style.cursor = ''; $rr('rrStatus').textContent = '';
 });
 const rrPins = L.layerGroup().addTo(map);
 function rrDrawPins() {
   rrPins.clearLayers();
-  RR.boxes.forEach(b => { if (b.lock) L.marker(b.lock, { interactive: false, icon: L.divIcon({ className: '', html: `<span class="rrnum">📍${b.n}</span>`, iconSize: null, iconAnchor: [0, 18] }) }).addTo(rrPins); });
+  RR.boxes.forEach(b => { if (b.lock) L.marker(b.lock, { interactive: false, icon: L.divIcon({ className: '', html: `<span class="rrnum"${b.lockAuto ? ' style="opacity:.65" title="auto-pin: ' + esc(b.apLabel || '') + '"' : ''}>📍${b.n}</span>`, iconSize: null, iconAnchor: [0, 18] }) }).addTo(rrPins); });
 }
 { const s = loadJSON('tb.rr.start'); if (s) rrSetStart(L.latLng(s[0], s[1])); }
 
@@ -942,6 +944,7 @@ async function rrMatch(onProgress) {
   }
   if (RR.src === 'osm') { onProgress('Loading OpenStreetMap data around the start…'); await RR_SRC.osm.load(startCells(RR_SRC.osm)); }
   const src = RR_SRC[RR.src];
+  if (RR.src === 'osm' && $rr('rrAuto').checked) await rrLoadCorridor(onProgress);
   let beam = rrStartStates(boxes[0], mode);
   if (!beam.length) throw new Error(`No usable road or track near the start point in the ${src.name} data${RR.src === 'osm' ? ' (or the OpenStreetMap server did not answer: try again in a minute)' : ''}.`);
   for (let i = 1; i < boxes.length; i++) {
@@ -966,13 +969,15 @@ async function rrMatch(onProgress) {
           if (!w.junction) base += (box.rel != null && Math.abs(box.rel) > 25 && !uTurn) ? Infinity : 1.2;
           if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[w.cur]); if (d > R) continue; base += (d / Math.max(35, R / 3)) ** 2; } // lockR: pin radius (m), e.g. a whole interchange
           if (!isFinite(base)) continue;
+          base += rrAvoidCost(st.av, graph.nodes[w.cur], box.km); // heading for the branch the roadbook says not to take
+          const av = rrAvoidNext(st.av, box, graph.nodes[w.cur]);
           const histBase = { i, v: w.cur, ll: graph.nodes[w.cur], dErr: w.acc - P, skipped: false };
           const gd = st.gdist + w.acc;
           const k = Math.max(0.85, Math.min(1.15, (gd + 3000) / (box.km * 1000 + 3000)));
           const edges = w.same ? st.edges : st.edges.concat(w.edges);
           if (finish) {
             const c = base;
-            children.push({ v: w.cur, out: null, score: st.score + c, k, lastKm: box.km, gdist: gd, hist: st.hist.concat({ ...histBase, cost: c }), edges });
+            children.push({ v: w.cur, out: null, score: st.score + c, k, lastKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...histBase, cost: c }), edges });
             continue;
           }
           const back = w.same ? (st.edges.length ? st.edges[st.edges.length - 1].fromNode : null) : w.path[w.path.length - 2];
@@ -984,7 +989,7 @@ async function rrMatch(onProgress) {
           for (const ex of exits) {
             const c = base + rrScoreExit(box, ex, nbCount) + (box.ra && !ex.ring ? 0.8 : 0);
             if (!isFinite(c)) continue;
-            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
+            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
           }
         }
         // skipping this box (misread, or a junction missing from IGN) is allowed at a price
@@ -1033,6 +1038,10 @@ $rr('rrRun').onclick = async () => {
   try {
     rrFixEdges();
     const t0 = Date.now();
+    const prog = t => { if (RR.cancel) throw new Error('Rebuild stopped.'); st.textContent = t; };
+    RR.apInfo = null;
+    if ($rr('rrAuto').checked) { RR.apInfo = await Promise.race([rrAutoPins(prog), stopped]); rrSaveBoxes(); rrRender(); rrDrawPins(); }
+    else for (const b of RR.boxes) { if (b.lockAuto) { b.lock = null; b.lockR = null; b.lockAuto = null; } b.avoid = null; }
     const best = await Promise.race([rrMatch(t => { if (RR.cancel) throw new Error('Rebuild stopped.'); rrFixEdges(); st.textContent = t; }), stopped]);
     rrShow(best, (Date.now() - t0) / 1000);
   } catch (err) { st.innerHTML = `<span style="color:#d33">${esc(err.message)}</span>`; }
@@ -1058,7 +1067,8 @@ function rrShow(best, secs) {
   const bad = res.filter(r => r.status === 'bad').length, warn = res.filter(r => r.status === 'warn').length;
   const last = RR.boxes[RR.boxes.length - 1].km;
   $rr('rrStatus').innerHTML = `Route rebuilt: <b>${fmtKm(total)}</b> on the ${RR.src === 'osm' ? 'OpenStreetMap (© OpenStreetMap contributors)' : 'IGN'} network for ${last != null ? last.toFixed(2) + ' km' : '?'} in the roadbook (trip meter factor ${best.k.toFixed(3)}), ${secs.toFixed(1)} s.` +
-    (bad || warn ? `<br><span style="color:#d33">${bad ? `${bad} box${bad > 1 ? 'es' : ''} not found` : ''}${bad && warn ? ', ' : ''}${warn ? `${warn} doubtful` : ''}</span>: they are highlighted in the table. Fix the value, or pin the box on the map (📍), and rebuild.` : ' Every box matched.');
+    (bad || warn ? `<br><span style="color:#d33">${bad ? `${bad} box${bad > 1 ? 'es' : ''} not found` : ''}${bad && warn ? ', ' : ''}${warn ? `${warn} doubtful` : ''}</span>: they are highlighted in the table. Fix the value, or pin the box on the map (📍), and rebuild.` : ' Every box matched.') +
+    (RR.apInfo ? `<br>${RR.apInfo.error ? 'Auto-pins skipped: OpenStreetMap did not answer.' : `Auto-pinned <b>${RR.apInfo.pinned}</b> box${RR.apInfo.pinned === 1 ? '' : 'es'} on exits, tolls and towns named in the notes (light 📍)${RR.apInfo.avoid ? `, and steered away from ${RR.apInfo.avoid} branch${RR.apInfo.avoid > 1 ? 'es' : ''} the notes say not to take` : ''}.`}` : '');
   rrRender();
 }
 $rr('rrGpx').onclick = () => {
