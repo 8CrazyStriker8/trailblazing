@@ -3411,15 +3411,17 @@ async function rrMatch(onProgress) {
       for (const st of beam) {
         const P = (box.km - st.lastKm) * 1000 * st.k;
         if (P < -5) continue;
-        const lo = Math.max(0, P * (1 - tol) - 30), hi = P * (1 + tol) + 30;
+        // a pinned box is where it is: its distance may be off (trip meter, misread), so look much wider
+        const ptol = box.lock ? Math.max(tol, 0.3) : tol, pad = box.lock ? 500 : 30;
+        const lo = Math.max(0, P * (1 - ptol) - pad), hi = P * (1 + ptol) + pad;
         const uTurn = box.rel != null && Math.abs(box.rel) >= 150;
-        const anyNode = finish || uTurn || box.rel == null || Math.abs(box.rel) <= 25;
+        const anyNode = finish || uTurn || box.rel == null || Math.abs(box.rel) <= 25 || !!box.lock;
         const ends = P < 1 ? [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }] : rrWalks(st, lo, hi, mode, finish, missing, anyNode);
         for (const w of ends) {
-          const dErr = (w.acc - P) / (P * tol + 30);
+          const dErr = (w.acc - P) / (P * ptol + pad);
           let base = dErr * dErr + 1.2 * w.pen;
           if (!w.junction) base += (box.rel != null && Math.abs(box.rel) > 25 && !uTurn) ? Infinity : 1.2;
-          if (box.lock) { const d = hav(box.lock, graph.nodes[w.cur]); if (d > 120) continue; base += (d / 35) ** 2; }
+          if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[w.cur]); if (d > R) continue; base += (d / Math.max(35, R / 3)) ** 2; } // lockR: pin radius (m), e.g. a whole interchange
           if (!isFinite(base)) continue;
           const histBase = { i, v: w.cur, ll: graph.nodes[w.cur], dErr: w.acc - P, skipped: false };
           const gd = st.gdist + w.acc;
@@ -3443,7 +3445,9 @@ async function rrMatch(onProgress) {
           }
         }
         // skipping this box (misread, or a junction missing from IGN) is allowed at a price
-        children.push({ ...st, score: st.score + 7, hist: st.hist.concat({ i, skipped: true, cost: 7, ll: null }) });
+        // (a pinned box is a hard constraint: skipping it costs so much that any state reaching the pin wins)
+        const skipCost = box.lock ? 400 : 7;
+        children.push({ ...st, score: st.score + skipCost, hist: st.hist.concat({ i, skipped: true, cost: skipCost, ll: null }) });
       }
       // load the missing data cells the walks ran into, then redo this box
       const need = [...missing].filter(([k]) => src.state(k) == null).slice(0, src.batch);
@@ -3451,6 +3455,8 @@ async function rrMatch(onProgress) {
       onProgress(`Loading ${src.name} data around box ${i + 1}… (${need.length} area${need.length > 1 ? 's' : ''})`);
       await src.load(need);
     }
+    // once some route reaches a pinned box, routes that skipped it are dropped (they would only wander off)
+    if (box.lock && children.some(c => !c.hist[c.hist.length - 1].skipped)) children = children.filter(c => !c.hist[c.hist.length - 1].skipped);
     // keep the best state per (junction, exit)
     const best = new Map();
     for (const c of children) { const key = `${c.v}>${c.out}`; const o = best.get(key); if (!o || c.score < o.score) best.set(key, c); }
