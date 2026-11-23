@@ -978,7 +978,8 @@ async function rrMatch(onProgress) {
         const lo = Math.max(0, P * (1 - ptol) - pad), hi = P * (1 + ptol) + pad;
         const uTurn = box.rel != null && Math.abs(box.rel) >= 150;
         const anyNode = finish || uTurn || box.rel == null || Math.abs(box.rel) <= 25 || !!box.lock;
-        const ends = P < 1 ? [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }] : rrWalks(st, lo, hi, mode, finish, missing, anyNode);
+        // a state off the network (off-piste) only goes on by compass, below
+        const ends = st.out == null && !finish && P >= 1 ? [] : P < 1 ? (st.out == null ? [] : [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }]) : st.out == null ? [] : rrWalks(st, lo, hi, mode, finish, missing, anyNode);
         for (const w of ends) {
           const dErr = (w.acc - P) / (P * ptol + pad);
           let base = dErr * dErr + 1.2 * w.pen;
@@ -1008,6 +1009,8 @@ async function rrMatch(onProgress) {
             children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
           }
         }
+        // off-piste: follow the compass heading for the box distance where no mapped track fits (or from a point off the network)
+        for (const c of rrOffPisteKids(st, box, boxes[i - 1], P, mode, finish, uTurn, missing, { tol, ptol, pad, i })) children.push(c);
         // skipping this box (misread, or a junction missing from IGN) is allowed at a price
         // (a pinned box is a hard constraint: skipping it costs so much that any state reaching the pin wins)
         const skipCost = box.lock ? 400 : 7;
@@ -1070,6 +1073,7 @@ function rrShow(best, secs) {
   const res = RR.boxes.map((b, i) => {
     const h = best.hist.find(x => x.i === i);
     if (!h || h.skipped) return { status: 'bad', msg: 'Not found on the road network: check this box (distance, arrow) or pin it on the map.', ll: null };
+    if (h.off) return { status: h.cost > 4 ? 'warn' : 'ok', ll: h.ll, off: true, msg: `Off-piste: ${Math.round(h.offLen)} m on the heading ${Math.round(h.offB)}° from the previous box${h.snapped ? ', ending on a mapped track' : ' (no mapped track there)'}.` };
     const dE = Math.abs(h.dErr || 0), aE = h.angErr == null ? 0 : Math.abs(h.angErr);
     const status = h.cost > 3 || dE > 250 || aE > 50 ? 'warn' : 'ok';
     return { status, ll: h.ll, msg: `${status === 'ok' ? 'Matched' : 'Doubtful match'}: distance off by ${Math.round(h.dErr || 0)} m${h.angErr != null ? `, arrow off by ${Math.round(h.angErr)}°` : ''}.` };
@@ -1080,9 +1084,9 @@ function rrShow(best, secs) {
   L.polyline(coords, { renderer, color: '#000', weight: 4, opacity: .85, dashArray: '10 6', interactive: false }).addTo(RR.layer);
   res.forEach((r, i) => { if (r.ll) L.marker(r.ll, { icon: L.divIcon({ className: '', html: `<span class="rrnum ${r.status}">${i + 1}</span>`, iconSize: null, iconAnchor: [-4, 8] }) }).bindTooltip(esc(r.msg)).addTo(RR.layer); });
   if (coords.length) map.fitBounds(L.latLngBounds(coords), { paddingTopLeft: [window.innerWidth > 600 ? rrPanel.offsetWidth + 70 : 20, 20], paddingBottomRight: [20, 20] });
-  const bad = res.filter(r => r.status === 'bad').length, warn = res.filter(r => r.status === 'warn').length;
+  const bad = res.filter(r => r.status === 'bad').length, warn = res.filter(r => r.status === 'warn').length, off = res.filter(r => r.off).length;
   const last = RR.boxes[RR.boxes.length - 1].km;
-  $rr('rrStatus').innerHTML = `Route rebuilt: <b>${fmtKm(total)}</b> on the ${RR.src === 'osm' ? 'OpenStreetMap (© OpenStreetMap contributors)' : 'IGN'} network for ${last != null ? last.toFixed(2) + ' km' : '?'} in the roadbook (trip meter factor ${best.k.toFixed(3)}), ${secs.toFixed(1)} s.` +
+  $rr('rrStatus').innerHTML = `Route rebuilt: <b>${fmtKm(total)}</b> on the ${RR.src === 'osm' ? 'OpenStreetMap (© OpenStreetMap contributors)' : 'IGN'} network for ${last != null ? last.toFixed(2) + ' km' : '?'} in the roadbook (trip meter factor ${best.k.toFixed(3)}), ${secs.toFixed(1)} s.${off ? ` ${off} box${off > 1 ? 'es' : ''} reached off-piste, on the compass heading (dashed straight legs).` : ''}` +
     (bad || warn ? `<br><span style="color:#d33">${bad ? `${bad} box${bad > 1 ? 'es' : ''} not found` : ''}${bad && warn ? ', ' : ''}${warn ? `${warn} doubtful` : ''}</span>: they are highlighted in the table. Fix the value, or pin the box on the map (📍), and rebuild.` : ' Every box matched.') +
     (RR.apInfo ? `<br>${RR.apInfo.error ? 'Auto-pins skipped: OpenStreetMap did not answer.' : `Auto-pinned <b>${RR.apInfo.pinned}</b> box${RR.apInfo.pinned === 1 ? '' : 'es'} on exits, tolls and towns named in the notes (light 📍)${RR.apInfo.avoid ? `, and steered away from ${RR.apInfo.avoid} branch${RR.apInfo.avoid > 1 ? 'es' : ''} the notes say not to take` : ''}.`}` : '');
   rrRender();
