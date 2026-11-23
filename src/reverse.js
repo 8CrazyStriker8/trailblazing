@@ -1012,14 +1012,18 @@ async function rrMatch(onProgress) {
         if (P < -5) continue;
         // a pinned box is where it is: its distance may be off (trip meter, misread), so look much wider
         const ptol = box.lock ? Math.max(tol, 0.3) : tol, pad = box.lock ? 500 : 30;
-        const lo = Math.max(0, P * (1 - ptol) - pad), hi = P * (1 + ptol) + pad;
+        // the distance is reset at each junction box; boxes in between (a fuel station, a village sign) are not
+        // firm, so the uncertainty grows with the distance since the last junction box, as it does for a rider
+        const anchorKm = st.anchorKm ?? st.lastKm, span = Math.max(P, (box.km - anchorKm) * 1000 * st.k);
+        const slack = Math.min(3000, P * ptol + (span - P) * ptol * 0.5) + pad;
+        const lo = Math.max(0, P - slack), hi = P + slack;
         const uTurn = box.rel != null && Math.abs(box.rel) >= 150;
         const anyNode = finish || uTurn || box.rel == null || Math.abs(box.rel) <= 25 || !!box.lock;
         // a state off the network (off-piste) only goes on by compass, below
         const ends = st.out == null && !finish && P >= 1 ? [] : P < 1 ? (st.out == null ? [] : [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }]) : st.out == null ? [] : rrWalks(st, lo, hi, mode, finish, missing, anyNode);
         let bestShape = Infinity;
         const take = (w, wide) => {
-          const dErr = (w.acc - P) / (P * ptol + pad);
+          const dErr = (w.acc - P) / slack;
           let base = dErr * dErr + 1.2 * w.pen;
           // on pistes with a heading, a track that wanders off it or loops back is worth less than the compass
           if (capPrev != null && P > 250 && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P);
@@ -1034,7 +1038,7 @@ async function rrMatch(onProgress) {
           const edges = w.same ? st.edges : st.edges.concat(w.edges);
           if (finish) {
             const c = base;
-            children.push({ v: w.cur, out: null, score: st.score + c, k, lastKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...histBase, cost: c }), edges });
+            children.push({ v: w.cur, out: null, score: st.score + c, k, lastKm: box.km, anchorKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...histBase, cost: c }), edges });
             return;
           }
           const back = w.same ? (st.edges.length ? st.edges[st.edges.length - 1].fromNode : null) : w.path[w.path.length - 2];
@@ -1050,13 +1054,13 @@ async function rrMatch(onProgress) {
             const c = base + rrScoreExit(box, ex, arms ? null : neighbours(w.cur).size) + shape + (box.ra && !ex.ring ? 0.8 : 0) + (wide ? 0.5 : 0);
             if (!isFinite(c)) continue;
             if (!wide) bestShape = Math.min(bestShape, shape + rrScoreExit(box, ex, null));
-            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, shape, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
+            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, anchorKm: (rrIsJunctionBox(box) && w.junction) || box.lock ? box.km : anchorKm, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, shape, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
           }
         };
         for (const w of ends) take(w, false);
         // like a rider who does not see the junction drawn: look a bit further either side for one that does look like it
         if (!finish && st.out != null && P >= 1 && rrIsJunctionBox(box) && bestShape > 1.5) {
-          const lo2 = Math.max(0, P * (1 - 2 * ptol) - 2 * pad), hi2 = P * (1 + 2 * ptol) + 2 * pad;
+          const lo2 = Math.max(0, P - 2 * slack), hi2 = P + 2 * slack;
           for (const w of rrWalks(st, lo2, hi2, mode, finish, missing, anyNode)) if (w.acc < lo || w.acc > hi) take(w, true);
         }
         // off-piste: follow the compass heading for the box distance where no mapped track fits (or from a point off the network)
