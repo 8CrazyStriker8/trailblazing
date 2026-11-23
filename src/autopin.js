@@ -317,6 +317,14 @@ let rrOffN = 0;
 const rrOffRec = ll => ({ id: 'offpiste-' + (++rrOffN), cls: 'path', ll, p: { source: RR.src === 'osm' ? 'osm' : 'ign', cleabs: 'offpiste-' + rrOffN, nature: 'Hors piste', importance: '6', prive: 'false', etat_de_l_objet: 'En service', nom_collaboratif_gauche: 'off-piste (compass heading)', cpx_numero: '' } });
 const rrOffWanted = (st, box, prev) => st.out == null || st.offB != null || /^(track|path)$/.test(box.surf || '') || /^(track|path)$/.test((prev && prev.surf) || '') ||
   /hors[- ]?piste|\bcap\s*[~≈]|\bc\s*[~≈]\s*\d/i.test(((prev && prev.notes) || '') + ' ' + (box.notes || ''));
+// cost of a network leg from a to b when the roadbook gives the heading cap for it: off the heading, or
+// far shorter in a straight line than on the ground (a loop), it is likely the wrong track
+function rrHeadingCost(a, b, cap, P) {
+  const d = hav(a, b); let c = 0;
+  if (d > 50) c += Math.min(4, (Math.max(0, Math.abs(relAngle(bearing(a, b), cap)) - 20) / 35) ** 2);
+  const sr = d / P; if (sr < 0.6) c += Math.min(3, ((0.6 - sr) / 0.3) ** 2);
+  return c;
+}
 function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   if (!rrOffWanted(st, box, prev)) return [];
   const turn = h => (box.rel != null && !box.ra ? (h + box.rel + 360) % 360 : h); // heading after this box

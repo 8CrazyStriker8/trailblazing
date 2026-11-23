@@ -972,6 +972,7 @@ async function rrMatch(onProgress) {
     let children;
     for (let round = 0; round < (RR.src === 'osm' ? 10 : 5); round++) {
       const missing = new Map(); children = [];
+      const capPrev = /^(track|path)$/.test(box.surf || '') || /^(track|path)$/.test(boxes[i - 1].surf || '') ? rrCapOf(boxes[i - 1]) : null;
       for (const st of beam) {
         const P = (box.km - st.lastKm) * 1000 * st.k;
         if (P < -5) continue;
@@ -985,6 +986,8 @@ async function rrMatch(onProgress) {
         for (const w of ends) {
           const dErr = (w.acc - P) / (P * ptol + pad);
           let base = dErr * dErr + 1.2 * w.pen;
+          // on pistes with a heading, a track that wanders off it or loops back is worth less than the compass
+          if (capPrev != null && P > 250 && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P);
           if (!w.junction) base += (box.rel != null && Math.abs(box.rel) > 25 && !uTurn) ? Infinity : 1.2;
           if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[w.cur]); if (d > R) continue; base += (d / Math.max(35, R / 3)) ** 2; } // lockR: pin radius (m), e.g. a whole interchange
           if (!isFinite(base)) continue;
