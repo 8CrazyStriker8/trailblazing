@@ -3576,7 +3576,8 @@ $rr('rrStartPrev').onclick = () => { if (RR.lastEnd) rrSetStart(L.latLng(RR.last
 // Pure helpers first (tested in tools/test-autopin.js), then the parts that use the network.
 
 const RR_AP_STOP_WORDS = ['rond point', 'attention', 'arrivee', 'depart', 'station', 'police', 'aire', 'barriere', 'col', 'cp', 'td', 'tjs', 'ad', 'ag', 'groupe',
-  'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche', 'danger', 'piste', 'route', 'autoroute', 'village', 'entree', 'sortie', 'fin', 'debut', 'drapeau', 'passage', 'pas'];
+  'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche', 'danger', 'piste', 'route', 'autoroute', 'village', 'entree', 'sortie', 'fin', 'debut', 'drapeau', 'passage', 'pas', 'prudence', 'pont', 'tunnel', 'pano', 'panorama', 'marche', 'souk', 'travaux', 'vous', 'stop', 'cs', 'ks', 'kc', 'rlt', 'pp',
+  'arrival zone', 'zone', 'oued', 'plato', 'piste', 'dos d anes', 'ralentisseur', 'timing', 'cairns', 'potos'];
 function rrFoldName(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
     .replace(/[’'`]/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
@@ -3589,13 +3590,13 @@ function rrApCut(s) {
   s = String(s).split(/[,;()!:]|\.(?:\s|$)|\s+-\s+|\s+(?:direction|dir\.|sve|suivre|suivez|td|tjs|ad|ag|max|puis|et|par|sur|vers|au|apr[eè]s|avant|en|sans|\d+\s*(?:m|km)\b)\b/i)[0];
   return s.trim().replace(/\s+/g, ' ');
 }
-const RR_AP_NAMEOK = n => { const f = rrFoldName(n); return f.length >= 3 && !RR_AP_STOP.has(f) && /[a-z]/.test(f) && f.split(' ').length <= 5; };
+const RR_AP_NAMEOK = n => { const f = rrFoldName(n); return f.length >= 3 && /^[a-z]/.test(f) && !RR_AP_STOP.has(f) && /[a-z]/.test(f) && f.split(' ').length <= 5; };
 // names in a box's notes: pins [{name, kind: exit|toll|rest|town}], avoid [name] (the branch not taken)
 function rrPlaceRefs(notes) {
   const t = String(notes || ''), pins = [], avoid = [];
   const add = (kind, raw) => {
     for (let n of String(raw).split(/\s+\/\s+|\s*\/\s*/)) {
-      n = rrApCut(n).replace(/^(?:(?:de|du|la|le)\s+|[dl]['’]\s*)/i, '');
+      n = rrApCut(n).replace(/^(?:(?:de|du|la|le)\s+|[dl]['’]\s*)/i, '').replace(/^(?:pano(?:rama)?|panneau|entr[ée]e)\s+/i, '');
       if (RR_AP_NAMEOK(n) && !pins.some(p => rrFoldName(p.name) === rrFoldName(n))) pins.push({ name: n, kind });
     }
   };
@@ -3610,10 +3611,15 @@ function rrPlaceRefs(notes) {
   const ex = /(?:^|[^n]\s|\()sortie\s+(?!direction|dir\b|vers|d['’]|de\s|du\s|des\s|port|village|autoroute)(?:[àa]\s+p[ée]age\s+)?([^]*)/gi;
   while ((m = ex.exec(u))) add('exit', m[1]);
   if ((m = /(?:entr[ée]e|fin|sortie)\s+(?:du\s+)?village\s+(?:de\s+|d['’]\s*)?([^]*)/i.exec(u))) add('town', m[1]);
-  else if ((m = /\bvillage\s+(?:de\s+|d['’]\s*)?([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
+  else if ((m = /\b[Vv]illage\s+(?:de\s+|d['’]\s*)?([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
+  // "Zaida, entrée village", "Kerandou, début de zone", "Entrée Erfoud", "Vous êtes à Midelt", "rond-point centre Midelt"
+  if ((m = /^\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,3})\s*,\s*(?:entr[ée]e|fin|d[ée]but|sortie)\b/.exec(u))) add('town', m[1]);
+  if ((m = /\bentr[ée]e\s+(?:de\s+|d['’]\s*)?(?!village|autoroute|zone|du|de la)([A-ZÀ-Ý][^]*)/i.exec(u))) add('town', m[1]);
+  if ((m = /\bvous [êe]tes (?:à|a|dans)\s+([A-ZÀ-Ý][^]*)/i.exec(u))) add('town', m[1]);
+  if ((m = /\bcentre(?:-ville)?\s+(?:de\s+|d['’]\s*)?([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
   if ((m = /\ben sortie d['’]\s*([^]*)/i.exec(u))) add('town', m[1]);
-  if ((m = /\bdans\s+([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
-  if ((m = /^\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,3})\s*[.:]\s/.exec(u))) add('town', m[1]);
+  if ((m = /\b[Dd]ans\s+([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
+  if ((m = /^\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,3})\s*[.:]\s/.exec(u)) && m[1] !== m[1].toUpperCase()) add('town', m[1].replace(/^entr[ée]e\s+/i, ''));
   return { pins, avoid };
 }
 function rrLev(a, b) {
