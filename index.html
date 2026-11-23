@@ -3679,7 +3679,7 @@ function rrApChoose(start, items, hav, startKm = 0) {
 }
 
 // ---------- network part ----------
-async function rrOverpassText(q, ms = 75000) { return rrOverpass(q, ms, true); }
+async function rrOverpassText(q, ms = 130000) { return rrOverpass(q, ms, true); }
 async function rrOverpass(q, ms = 150000, text = false) {
   // the public servers often answer 429/502/504 for a minute when busy: try each, then again after a pause
   const run = async () => {
@@ -3711,18 +3711,18 @@ function rrApRow(line) {
   return type && { type, place, names, ll: [+lat, +lon] };
 }
 async function rrApFetch(bbox, re) {
-  const bb = bbox.map(v => v.toFixed(4)).join(','), pl = '["place"~"^(city|town|village|suburb|hamlet)$"]';
-  const q = `[out:csv(::type,::lat,::lon,name,"name:fr","name:en",highway,barrier,place;false;"\\t")][timeout:90];` +
+  const bb = bbox.map(v => v.toFixed(4)).join(','), pl = '["place"~"^(city|town|village)$"]';
+  const q = `[out:csv(::type,::lat,::lon,name,"name:fr","name:en",highway,barrier,place;false;"\\t")][timeout:120];` +
     `(node["highway"="motorway_junction"]["name"](${bb});node["barrier"="toll_booth"]["name"](${bb});nwr["highway"~"^(services|rest_area)$"]["name"](${bb});` +
     (re ? `node${pl}["name"~"${re}",i](${bb});node${pl}["name:fr"~"${re}",i](${bb});` : '') + ');out center;';
   const r = await rrOverpassText(q);
   return r.split('\n').map(rrApRow).filter(Boolean);
 }
 // sets box.lock/lockR/lockAuto on the boxes it can place and box.avoid on boxes naming the branch not taken.
-// The lookup walks along the roadbook ~120 km at a time from the last pin found, so each OpenStreetMap
+// The lookup walks along the roadbook ~80 km at a time from the last pin found, so each OpenStreetMap
 // request covers a small area (one request over a whole 500 km stage times out).
 async function rrAutoPins(onProgress) {
-  const boxes = RR.boxes, W = 120;
+  const boxes = RR.boxes, W = 80;
   for (const b of boxes) { if (b.lockAuto) { b.lock = null; b.lockR = null; b.lockAuto = null; } b.avoid = null; b.apLabel = null; }
   const refs = boxes.map(b => rrPlaceRefs(b.notes));
   if (!RR.start || !refs.some(r => r.pins.length || r.avoid.length)) return { pinned: 0, avoid: 0 };
