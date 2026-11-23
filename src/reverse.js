@@ -768,10 +768,11 @@ function rrBack(path, d) { // node about d metres back along a walk (array of no
 }
 // Data sources: IGN BD TOPO cells (the app's own loader) or OpenStreetMap ways from Overpass,
 // converted to BD TOPO-like features so the map, the planner and the roadbook export work on them too.
-const RR_OSM_CELL = 0.02, rrOsmState = new Map(); // key -> 'loading' | 'done' | 'error'
+const RR_OSM_CELL = 0.02, rrOsmState = new Map(), rrOsmFails = new Map(); // key -> 'loading' | 'done' | 'error'; key -> failed loads
 const RR_SRC = {
   ign: { name: 'IGN', size: () => CELL, state: k => cells.get(k), load: list => requestCells(list), batch: 48 },
-  osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => rrOsmState.get(k), load: list => rrOsmLoadMany(list), batch: 12 },
+  // a cell the busy server refused is asked again later (up to 3 times): a missing town centre loses the route
+  osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => { const s = rrOsmState.get(k); return s === 'error' && (rrOsmFails.get(k) || 0) < 3 ? undefined : s; }, load: list => rrOsmLoadMany(list), batch: 12 },
 };
 function rrCellsAround(ll, missing, src, r = 0.004) { // note unloaded data cells within ~r degrees of a point
   const S = src.size();
@@ -831,7 +832,7 @@ function rrOsmLoadKeys(keys, c) {
         } catch (err) { lastErr = err; }
       }
     }
-    set('error'); throw lastErr;
+    set('error'); keys.forEach(k => rrOsmFails.set(k, (rrOsmFails.get(k) || 0) + 1)); throw lastErr;
   };
   const pr = overpassBusy.then(run, run); // one Overpass request at a time, shared with the access check (fair use)
   overpassBusy = pr.catch(() => {});
@@ -1149,7 +1150,7 @@ function rrShow(best, secs) {
   if (coords.length) map.fitBounds(L.latLngBounds(coords), { paddingTopLeft: [window.innerWidth > 600 ? rrPanel.offsetWidth + 70 : 20, 20], paddingBottomRight: [20, 20] });
   const bad = res.filter(r => r.status === 'bad').length, warn = res.filter(r => r.status === 'warn').length, off = res.filter(r => r.off).length;
   const last = RR.boxes[RR.boxes.length - 1].km;
-  $rr('rrStatus').innerHTML = `Route rebuilt: <b>${fmtKm(total)}</b> on the ${RR.src === 'osm' ? 'OpenStreetMap (© OpenStreetMap contributors)' : 'IGN'} network for ${last != null ? last.toFixed(2) + ' km' : '?'} in the roadbook (trip meter factor ${best.k.toFixed(3)}), ${secs.toFixed(1)} s.${off ? ` ${off} box${off > 1 ? 'es' : ''} reached off-piste, on the compass heading (dashed straight legs).` : ''}` +
+  $rr('rrStatus').innerHTML = `Route rebuilt: <b>${fmtKm(total)}</b> on the ${RR.src === 'osm' ? 'OpenStreetMap (© OpenStreetMap contributors)' : 'IGN'} network for ${last != null ? last.toFixed(2) + ' km' : '?'} in the roadbook (trip meter factor ${best.k.toFixed(3)}), ${secs.toFixed(1)} s.${off ? ` ${off} box${off > 1 ? 'es' : ''} reached off-piste, on the compass heading (dashed straight legs).` : ''}${RR.src === 'osm' && [...rrOsmState.values()].includes('error') ? ` <span style="color:#d33">${[...rrOsmState.values()].filter(v => v === 'error').length} map area(s) could not be loaded (server busy): boxes there may be wrong, rebuild later.</span>` : ''}` +
     (bad || warn ? `<br><span style="color:#d33">${bad ? `${bad} box${bad > 1 ? 'es' : ''} not found` : ''}${bad && warn ? ', ' : ''}${warn ? `${warn} doubtful` : ''}</span>: they are highlighted in the table. Fix the value, or pin the box on the map (📍), and rebuild.` : ' Every box matched.') +
     (RR.apInfo ? `<br>${RR.apInfo.error ? 'Auto-pins skipped: OpenStreetMap did not answer.' : `Auto-pinned <b>${RR.apInfo.pinned}</b> box${RR.apInfo.pinned === 1 ? '' : 'es'} on exits, tolls and towns named in the notes (light 📍)${RR.apInfo.avoid ? `, and steered away from ${RR.apInfo.avoid} branch${RR.apInfo.avoid > 1 ? 'es' : ''} the notes say not to take` : ''}.`}` : '');
   rrRender();
