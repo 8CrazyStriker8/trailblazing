@@ -873,6 +873,40 @@ function rrRingExits(v, prev, inB, mode) { // drive round the roundabout from en
   return out;
 }
 const rrRoadKey = s => { const m = /^([A-Z]+)0*(\d+)([A-Z]?)/.exec(String(s || '').toUpperCase().replace(/[\s.]+/g, '')); return m ? m[1] + m[2] + m[3] : ''; };
+// ---------- Junction correlator: does this junction look like the box's sketch? ----------
+// The sketch has the way taken (box.rel) and the other branches drawn (box.branches), as angles from the
+// arrival direction. The map junction has every way leaving it except the one arriving (paths too: a rider
+// sees them). The way taken is the exit being scored; the other drawn branches are paired with the other
+// arms at the smallest angle error. A drawn branch with no arm: the map lacks it, or this is not the
+// junction. An arm not drawn: the roadbook left out a small path, or this is not the junction.
+const rrIsJunctionBox = box => (box.branches && box.branches.length > 0) || (box.rel != null && Math.abs(box.rel) > 25);
+function rrArms(v, back, inB) { // [{n, rel, kind}] of every way leaving junction v, except the one arriving
+  const out = [];
+  for (const [n, e] of neighbours(v)) {
+    if (n === back) continue;
+    out.push({ n, rel: relAngle(bearing(graph.nodes[v], walkBranch(v, n, RR_LOOK)), inB), kind: surfaceOf(e.rec) });
+  }
+  return out;
+}
+const RR_ARM_EXTRA = { road: 0.6, track: 0.3, path: 0.12, 'cycle path': 0.12 }; // an arm on the map the sketch does not show
+function rrShapeCost(box, arms, exN) {
+  if (!rrIsJunctionBox(box) || !arms) return 0;
+  const others = arms.filter(a => a.n !== exN), drawn = box.branches || [];
+  const missing = /^(track|path)$/.test(box.surf || '') ? 0.5 : 0.9; // a drawn branch with no arm (desert tracks are often unmapped)
+  let best = Infinity;
+  const used = new Array(others.length).fill(false);
+  (function go(k, acc) {
+    if (acc >= best) return;
+    if (k === drawn.length) { let c = acc; others.forEach((a, j) => { if (!used[j]) c += RR_ARM_EXTRA[a.kind] ?? 0.3; }); best = Math.min(best, c); return; }
+    go(k + 1, acc + missing);
+    for (let j = 0; j < others.length; j++) {
+      if (used[j]) continue;
+      const d = Math.abs(relAngle(others[j].rel, drawn[k])); if (d > 60) continue;
+      used[j] = true; go(k + 1, acc + (d / 30) ** 2); used[j] = false;
+    }
+  })(0, 0);
+  return Math.min(5, best);
+}
 function rrScoreExit(box, ex, nbCount) { // cost of leaving box's junction by exit ex; Infinity = impossible
   let c = 0;
   if (box.road && rrRoadKey(box.road)) { // road number from the signs in the box
@@ -983,14 +1017,15 @@ async function rrMatch(onProgress) {
         const anyNode = finish || uTurn || box.rel == null || Math.abs(box.rel) <= 25 || !!box.lock;
         // a state off the network (off-piste) only goes on by compass, below
         const ends = st.out == null && !finish && P >= 1 ? [] : P < 1 ? (st.out == null ? [] : [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }]) : st.out == null ? [] : rrWalks(st, lo, hi, mode, finish, missing, anyNode);
-        for (const w of ends) {
+        let bestShape = Infinity;
+        const take = (w, wide) => {
           const dErr = (w.acc - P) / (P * ptol + pad);
           let base = dErr * dErr + 1.2 * w.pen;
           // on pistes with a heading, a track that wanders off it or loops back is worth less than the compass
           if (capPrev != null && P > 250 && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P);
           if (!w.junction) base += (box.rel != null && Math.abs(box.rel) > 25 && !uTurn) ? Infinity : 1.2;
-          if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[w.cur]); if (d > R) continue; base += (d / Math.max(35, R / 3)) ** 2; } // lockR: pin radius (m), e.g. a whole interchange
-          if (!isFinite(base)) continue;
+          if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[w.cur]); if (d > R) return; base += (d / Math.max(35, R / 3)) ** 2; } // lockR: pin radius (m), e.g. a whole interchange
+          if (!isFinite(base)) return;
           base += rrAvoidCost(st.av, graph.nodes[w.cur], box.km); // heading for the branch the roadbook says not to take
           const av = rrAvoidNext(st.av, box, graph.nodes[w.cur]);
           const histBase = { i, v: w.cur, ll: graph.nodes[w.cur], dErr: w.acc - P, skipped: false };
@@ -1000,19 +1035,29 @@ async function rrMatch(onProgress) {
           if (finish) {
             const c = base;
             children.push({ v: w.cur, out: null, score: st.score + c, k, lastKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...histBase, cost: c }), edges });
-            continue;
+            return;
           }
           const back = w.same ? (st.edges.length ? st.edges[st.edges.length - 1].fromNode : null) : w.path[w.path.length - 2];
           const inB = w.same ? (back != null ? bearing(graph.nodes[back], graph.nodes[w.cur]) : null) : bearing(graph.nodes[rrBack(w.path, RR_LOOK)], graph.nodes[w.cur]);
           const exits = rrExits(w.cur, back, inB, mode, uTurn);
-          const nbCount = neighbours(w.cur).size;
           // at a roundabout box, the exits are the roads leaving the ring, reached by driving round it
-          if (box.ra && inB != null) for (const ex of rrRingExits(w.cur, back, inB, mode)) exits.push(ex);
+          const ringEx = box.ra && inB != null ? rrRingExits(w.cur, back, inB, mode) : [];
+          for (const ex of ringEx) exits.push(ex);
+          // the junction's shape against the sketch (a roundabout: its exits; otherwise: its arms)
+          const arms = inB == null || !rrIsJunctionBox(box) ? null : ringEx.length ? ringEx.map(x => ({ n: x.n, rel: x.rel, kind: surfaceOf(x.e.rec) })) : rrArms(w.cur, back, inB);
           for (const ex of exits) {
-            const c = base + rrScoreExit(box, ex, nbCount) + (box.ra && !ex.ring ? 0.8 : 0);
+            const shape = rrShapeCost(box, ex.ring || !ringEx.length ? arms : null, ex.n);
+            const c = base + rrScoreExit(box, ex, arms ? null : neighbours(w.cur).size) + shape + (box.ra && !ex.ring ? 0.8 : 0) + (wide ? 0.5 : 0);
             if (!isFinite(c)) continue;
-            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
+            if (!wide) bestShape = Math.min(bestShape, shape + rrScoreExit(box, ex, null));
+            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, shape, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
           }
+        };
+        for (const w of ends) take(w, false);
+        // like a rider who does not see the junction drawn: look a bit further either side for one that does look like it
+        if (!finish && st.out != null && P >= 1 && rrIsJunctionBox(box) && bestShape > 1.5) {
+          const lo2 = Math.max(0, P * (1 - 2 * ptol) - 2 * pad), hi2 = P * (1 + 2 * ptol) + 2 * pad;
+          for (const w of rrWalks(st, lo2, hi2, mode, finish, missing, anyNode)) if (w.acc < lo || w.acc > hi) take(w, true);
         }
         // off-piste: follow the compass heading for the box distance where no mapped track fits (or from a point off the network)
         for (const c of rrOffPisteKids(st, box, boxes[i - 1], P, mode, finish, uTurn, missing, { tol, ptol, pad, i })) children.push(c);
@@ -1089,8 +1134,8 @@ function rrShow(best, secs) {
     if (!h || h.skipped) return { status: 'bad', msg: 'Not found on the road network: check this box (distance, arrow) or pin it on the map.', ll: null };
     if (h.off) return { status: h.cost > 4 ? 'warn' : 'ok', ll: h.ll, off: true, msg: `Off-piste: ${Math.round(h.offLen)} m on the heading ${Math.round(h.offB)}° from the previous box${h.snapped ? ', ending on a mapped track' : ' (no mapped track there)'}.` };
     const dE = Math.abs(h.dErr || 0), aE = h.angErr == null ? 0 : Math.abs(h.angErr);
-    const status = h.cost > 3 || dE > 250 || aE > 50 ? 'warn' : 'ok';
-    return { status, ll: h.ll, msg: `${status === 'ok' ? 'Matched' : 'Doubtful match'}: distance off by ${Math.round(h.dErr || 0)} m${h.angErr != null ? `, arrow off by ${Math.round(h.angErr)}°` : ''}.` };
+    const status = h.cost > 3 || dE > 250 || aE > 50 || h.shape > 1.5 ? 'warn' : 'ok';
+    return { status, ll: h.ll, msg: `${status === 'ok' ? 'Matched' : 'Doubtful match'}: distance off by ${Math.round(h.dErr || 0)} m${h.angErr != null ? `, arrow off by ${Math.round(h.angErr)}°` : ''}${h.shape > 1.5 ? ', the junction does not look like the sketch' : ''}.` };
   });
   RR.result = { coords, legs, boxes: res, total };
   if (coords.length) RR.lastEnd = coords[coords.length - 1];
