@@ -1028,10 +1028,13 @@ async function rrMatch(onProgress) {
       await src.load(need);
     }
     // a route whose straight line to the next pin is longer than the road left cannot get there: drop it while others can
+    // (and one that would need an unusually straight road to get there in time pays for it, so the beam keeps the likely ones)
     const np = nextPin[i];
     if (np != null) {
-      const pb = boxes[np], reach = c => hav(graph.nodes[c.v], pb.lock) <= (pb.km - box.km) * 1000 * Math.max(1, c.k) * 1.15 + (pb.lockR || 120) + 1500;
+      const pb = boxes[np], left = c => (pb.km - box.km) * 1000 * Math.max(1, c.k), gap = c => Math.max(0, hav(graph.nodes[c.v], pb.lock) - (pb.lockR || 120));
+      const reach = c => gap(c) <= left(c) * 1.15 + 1500;
       if (children.some(reach)) children = children.filter(reach);
+      for (const c of children) { const r = gap(c) / (left(c) + 1000); if (r > 0.8) c.score += Math.min(6, ((r - 0.8) / 0.12) ** 2); }
     }
     // once some route reaches a pinned box, routes that skipped it are dropped (they would only wander off)
     if (box.lock && children.some(c => !c.hist[c.hist.length - 1].skipped)) children = children.filter(c => !c.hist[c.hist.length - 1].skipped);
