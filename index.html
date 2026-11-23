@@ -3658,7 +3658,8 @@ function rrApCandidates(ref, feats) {
     else if (f.type === 'services') R = ref.kind === 'rest' ? 900 : null;
     else if (f.type === 'place') {
       const size = { city: 4500, town: 3000, village: 1800, suburb: 1500 }[f.place] || 1200;
-      R = ref.kind === 'town' ? size + 800 : ref.kind === 'exit' ? size + 3500 : ref.kind === 'toll' ? size + 5000 : null;
+      // an exit or toll named after a city can be 10 km or more from its centre: no fallback on a city
+      R = ref.kind === 'town' ? size + 800 : f.place === 'city' ? null : ref.kind === 'exit' ? size + 3500 : ref.kind === 'toll' ? size + 5000 : null;
       q = ref.kind === 'town' ? 0 : 0.6; // a town is only a fallback for an exit or a toll
     }
     if (R == null) continue;
@@ -3677,7 +3678,8 @@ function rrApChoose(start, items, hav, startKm = 0) {
       const D = (it.km - p.km) * 1000, s = hav(p.c.ll, c.ll);
       if (s > D * 1.12 + p.c.R + c.R + 300) continue; // straight line longer than the road: impossible
       let cost = p.score + c.cost - 1.5; // each pin kept is worth 1.5
-      if (D > 3000 && s + p.c.R + c.R < D * 0.25) cost += 2; // far too winding for a road section
+      if (D > 3000 && s + p.c.R + c.R < D * 0.25) continue; // back where it was after kilometres: two boxes on one junction
+      if (s > D) cost += 3 * ((s - D) / (0.05 * D + 500)) ** 2; // straight line longer than the road: only a trip meter error allows it
       // boxes between p and this one that had a name but no pin chosen
       if (!best || cost < best.score) best = { i: it.i, km: it.km, c, score: cost, prev: p };
     }
