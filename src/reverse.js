@@ -962,6 +962,8 @@ async function rrMatch(onProgress) {
   const src = RR_SRC[RR.src];
   if (RR.src === 'osm' && $rr('rrAuto').checked) await rrLoadCorridor(onProgress);
   let beam = rrStartStates(boxes[0], mode);
+  // the next pinned box after each box: routes that can no longer reach it in the distance left are dropped
+  const nextPin = []; for (let i = boxes.length - 1, nx = null; i >= 0; i--) { nextPin[i] = nx; if (boxes[i].lock && boxes[i].km != null) nx = i; }
   if (!beam.length) throw new Error(`No usable road or track near the start point in the ${src.name} data${RR.src === 'osm' ? ' (or the OpenStreetMap server did not answer: try again in a minute)' : ''}.`);
   for (let i = 1; i < boxes.length; i++) {
     const box = boxes[i], finish = i === boxes.length - 1;
@@ -1021,6 +1023,12 @@ async function rrMatch(onProgress) {
       if (!need.length) break;
       onProgress(`Loading ${src.name} data around box ${i + 1}… (${need.length} area${need.length > 1 ? 's' : ''})`);
       await src.load(need);
+    }
+    // a route whose straight line to the next pin is longer than the road left cannot get there: drop it while others can
+    const np = nextPin[i];
+    if (np != null) {
+      const pb = boxes[np], reach = c => hav(graph.nodes[c.v], pb.lock) <= (pb.km - box.km) * 1000 * Math.max(1, c.k) * 1.15 + (pb.lockR || 120) + 1500;
+      if (children.some(reach)) children = children.filter(reach);
     }
     // once some route reaches a pinned box, routes that skipped it are dropped (they would only wander off)
     if (box.lock && children.some(c => !c.hist[c.hist.length - 1].skipped)) children = children.filter(c => !c.hist[c.hist.length - 1].skipped);
