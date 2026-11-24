@@ -165,8 +165,8 @@
   <div class="row"><button id="rbSpot">● Start spotting</button><button id="rbAdd" style="display:none;flex:1;font-weight:700;background:#e8590c;color:#fff;border-color:#e8590c">+ Box</button></div>
   <div id="rbOdo" class="muted" style="cursor:pointer"></div>
   <div id="rbList"></div>
-  <div class="row"><button id="rbFromRoute">From route</button><label class="filebtn"><span>Open file…</span><input type="file" id="rbOpenFile" accept=".gpx,.xml,application/gpx+xml" hidden></label><button id="rbNew">New</button></div>
-  <div class="row"><button id="rbPdf">⬇ PDF</button><button id="rbOr">⬇ OpenRally</button></div>
+  <div class="row"><button id="rbFromRoute">From route</button><label class="filebtn"><span>Open file…</span><input type="file" id="rbOpenFile" accept=".gpx,.xml,application/gpx+xml,application/xml,text/xml" hidden></label><button id="rbNew">New</button></div>
+  <div class="row"><button id="rbPdf">⬇ PDF</button><button id="rbOr">⬇ OpenRally</button><button id="rbGpx" title="Save the roadbook's track and boxes as a plain GPX">⬇ GPX</button></div>
 </div>
 <div id="rbEdit" class="panel"></div>
 <div id="rsPanel" class="panel">
@@ -559,7 +559,7 @@ document.getElementById('cadCheck').addEventListener('change', e => {
 const ACC_CLASSES = ['path', 'cycle', 'small'];
 const MODE_LABEL = { walk: 'walkers', bike: 'bikes', vehicle: '4x4 / motorbikes' };
 const OSM_CELL = 0.02, ZONE_CELL = 0.05, OSM_TOL = 15; // metres between IGN and OSM geometry
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 const BAN_VALUES = ['no', 'private', 'agricultural', 'forestry', 'agricultural;forestry', 'forestry;agricultural', 'delivery', 'customers', 'permit', 'military', 'emergency', 'official', 'use_sidepath'];
 const WARN_VALUES = ['discouraged', 'destination'];
 const VALUE_FR = { no: 'forbidden', private: 'private', agricultural: 'farm vehicles only', forestry: 'forestry vehicles only', 'agricultural;forestry': 'farm & forestry only', 'forestry;agricultural': 'farm & forestry only', delivery: 'deliveries only', customers: 'customers only', permit: 'permit holders only', military: 'military only', emergency: 'emergency services only', official: 'official use only', use_sidepath: 'use the side path', discouraged: 'discouraged', destination: 'local access only', permissive: 'tolerated by the owner (can be withdrawn)', yes: 'allowed', designated: 'designated' };
@@ -1512,27 +1512,71 @@ function spotAddBox() {
   if (navigator.vibrate) navigator.vibrate(60);
 }
 
-// --- import OpenRally / TrailBlazing GPX
-function rbImport(text) {
-  const xml = new DOMParser().parseFromString(text, 'application/xml');
-  const ext = (el, name) => [...el.getElementsByTagName('*')].find(x => x.localName === name);
+// --- import OpenRally / TrailBlazing GPX (also read by the Scan→GPX panel)
+// Any GPX-shaped XML: OpenRally roadbook waypoints (wpt or rtept with an openrally:distance), whatever
+// the namespace prefixes, plus the track (trkpt, or rtept when they are not roadbook boxes).
+const OR_FLAGS = { dss: 'dss', ass: 'ass', wpm: 'wpm', wpv: 'wpv', wps: 'wps', wpe: 'wpe', wpc: 'wpc', wpn: 'wpv', dz: 'zone_start', fz: 'zone_end', dn: 'dn', fn: 'fn', neutralization: 'dn', reset: 'raz', cp: 'cp', checkpoint: 'cp', fuel: 'fuel', refuel: 'fuel' };
+function parseRoadbookXML(text) {
+  const xml = new DOMParser().parseFromString(String(text).replace(/^\uFEFF/, '').trim(), 'application/xml');
+  const perr = xml.getElementsByTagName('parsererror')[0];
+  if (perr) throw new Error('this is not valid XML (' + (perr.textContent || '').split('\n').find(l => l.trim()) + ')');
+  const all = name => [...xml.getElementsByTagName('*')].filter(e => e.localName === name);
+  const kids = (el, name) => [...el.getElementsByTagName('*')].filter(x => x.localName === name);
+  const kid = (el, name) => kids(el, name)[0];
+  const num = el => { const v = el && parseFloat(String(el.textContent).replace(',', '.')); return isFinite(v) ? v : null; };
+  const unesc = t => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&');
+  const pts = [...all('wpt'), ...all('rtept')];
+  const isBox = w => !!kid(w, 'distance');
   const boxes = [];
-  for (const w of xml.getElementsByTagName('wpt')) {
-    const dEl = ext(w, 'distance'); if (!dEl) continue;
-    const b = { kind: ext(w, 'dss') ? 'start' : ext(w, 'ass') ? 'finish' : 'junction', lat: +w.getAttribute('lat'), lng: +w.getAttribute('lon'), dist: parseFloat(dEl.textContent) * 1000,
-      rel: 0, cap: ext(w, 'cap') ? parseInt(ext(w, 'cap').textContent, 10) : null, inB: null, branches: [], inSurf: 'track', outSurf: 'track', notes: [], danger: ext(w, 'danger') ? parseInt(ext(w, 'danger').textContent, 10) || 0 : 0 };
-    const tul = ext(w, 'tulip'), m = tul && tul.textContent.match(/data-tb="([^"]*)"/);
-    if (m) { try { Object.assign(b, JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))); } catch (e) {} }
-    const nt = ext(w, 'notes');
-    if (nt) { const txt = [...nt.textContent.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)].map(x => x[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim()).filter(Boolean); b.notes = txt.length ? txt : (nt.textContent.trim() && !nt.textContent.includes('<') ? [nt.textContent.trim()] : []); }
+  for (const w of pts.filter(isBox)) {
+    const lat = parseFloat(w.getAttribute('lat')), lng = parseFloat(w.getAttribute('lon'));
+    const units = all('units')[0], miles = units && /imperial|mile/i.test(units.textContent);
+    const b = { lat: isFinite(lat) ? lat : null, lng: isFinite(lng) ? lng : null, km: num(kid(w, 'distance')) * (miles ? 1.609344 : 1),
+      cap: num(kid(w, 'cap')), danger: Math.max(0, Math.min(3, Math.round(num(kid(w, 'danger')) || 0))), notes: [], tb: null, sym: [], speed: null };
+    if (b.cap != null) b.cap = ((Math.round(b.cap) % 360) + 360) % 360;
+    for (const [tag, id] of Object.entries(OR_FLAGS)) if (kid(w, tag) && !b.sym.includes(id)) b.sym.push(id);
+    const sp = kid(w, 'speed') || (kid(w, 'dz') && kid(w, 'dz').getAttribute('speed'));
+    if (sp) { const v = typeof sp === 'string' ? parseFloat(sp) : num(sp); if (v > 0) { b.speed = v; b.sym.push('speed_limit'); } }
+    if (b.danger) b.sym.unshift('danger' + b.danger);
+    const tul = kid(w, 'tulip'), m = tul && tul.textContent.match(/data-tb="([^"]*)"/);
+    if (m) { try { b.tb = JSON.parse(unesc(m[1])); } catch (e) {} }
+    const nt = kid(w, 'notes');
+    if (nt) {
+      const raw = nt.textContent.trim();
+      const txt = [...raw.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)].map(x => unesc(x[1].replace(/<[^>]+>/g, '')).trim()).filter(Boolean);
+      b.notes = txt.length ? txt : raw && !raw.startsWith('<') && !/^data:|^[A-Za-z0-9+/=\r\n]{40,}$/.test(raw) ? raw.split(/\r?\n/).map(t => t.trim()).filter(Boolean) : [];
+    }
+    if (!b.notes.length) { const d = kid(w, 'desc') || kid(w, 'cmt'); if (d && d.textContent.trim()) b.notes = [d.textContent.trim()]; }
     boxes.push(b);
   }
-  if (!boxes.length) throw new Error('No roadbook waypoints (openrally:distance) found in this file.');
-  const track = [...xml.getElementsByTagName('trkpt')].map(t => [+t.getAttribute('lat'), +t.getAttribute('lon')]);
-  const nm = xml.getElementsByTagName('name')[0];
-  RB = { name: nm ? nm.textContent : 'Imported roadbook', boxes, track, odo: Math.max(...boxes.map(b => b.dist)) };
+  boxes.sort((a, b) => (a.km ?? 0) - (b.km ?? 0));
+  let track = all('trkpt').map(t => [parseFloat(t.getAttribute('lat')), parseFloat(t.getAttribute('lon'))]);
+  if (!track.length) track = all('rtept').filter(w => !isBox(w)).map(t => [parseFloat(t.getAttribute('lat')), parseFloat(t.getAttribute('lon'))]);
+  track = track.filter(p => isFinite(p[0]) && isFinite(p[1]));
+  const nm = all('name').find(n => n.parentNode && ['metadata', 'trk', 'rte', 'gpx'].includes(n.parentNode.localName));
+  if (!boxes.length && !track.length) throw new Error(all('wpt').length ? 'its waypoints are not roadbook boxes (no openrally:distance) and it has no track.' : 'no roadbook waypoint and no track found in this file.');
+  return { name: nm ? nm.textContent.trim() : '', boxes, track };
+}
+function rbImport(text) {
+  const r = parseRoadbookXML(text);
+  const boxes = r.boxes.filter(b => b.lat != null).map(x => {
+    const b = { kind: x.sym.includes('dss') ? 'start' : x.sym.includes('ass') ? 'finish' : 'junction', lat: x.lat, lng: x.lng, dist: (x.km || 0) * 1000,
+      rel: 0, cap: x.cap, inB: null, branches: [], inSurf: 'track', outSurf: 'track', notes: x.notes, danger: x.danger };
+    if (x.tb) Object.assign(b, x.tb);
+    return b;
+  });
+  RB = { name: r.name || 'Imported roadbook', boxes, track: r.track, odo: boxes.length ? Math.max(...boxes.map(b => b.dist)) : 0 };
   rbRender();
-  const ll = boxes.map(b => [b.lat, b.lng]).filter(p => p[0] || p[1]); if (ll.length) map.fitBounds(L.latLngBounds(ll).pad(0.2));
+  const ll = boxes.map(b => [b.lat, b.lng]).concat(r.track); if (ll.length) map.fitBounds(L.latLngBounds(ll).pad(0.2));
+  if (!boxes.length) alert(`No roadbook boxes in this file, only a track (${r.track.length} points). Use ⬇ GPX to save it.`);
+}
+function rbExportGPX() { // the roadbook's track and boxes as a plain GPX (track + one waypoint per box)
+  const rb = rbNormalize();
+  const x = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const coords = rb.coords.length > 1 ? rb.coords : rb.boxes.map(b => [b.lat, b.lng]);
+  const wpts = rb.boxes.map(b => `<wpt lat="${b.lat.toFixed(7)}" lon="${b.lng.toFixed(7)}"><name>${b.n}</name><desc>${x(`${(b.dist / 1000).toFixed(2)} km ${b.notes.join(' · ')}`.trim())}</desc></wpt>`).join('\n');
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="TrailBlazing" xmlns="http://www.topografix.com/GPX/1/1">\n${wpts}\n<trk><name>${x(rb.name || 'TrailBlazing roadbook')}</name><trkseg>\n${coords.map(p => `<trkpt lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}"/>`).join('\n')}\n</trkseg></trk>\n</gpx>\n`;
+  downloadBlob(new Blob([gpx], { type: 'application/gpx+xml' }), `${(rb.name || 'roadbook').normalize('NFD').replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'roadbook'}.gpx`);
 }
 
 // --- wiring
@@ -1550,6 +1594,7 @@ document.getElementById('rbNew').onclick = () => { if (RB.boxes.length && !confi
 document.getElementById('rbOpenFile').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(rbImport).catch(err => alert('Could not open this file: ' + err.message)); e.target.value = ''; };
 document.getElementById('rbPdf').onclick = () => { if (!RB.boxes.length) return; exportRoadbookPDF(rbNormalize()).catch(e => alert('Roadbook export failed: ' + e.message)); };
 document.getElementById('rbOr').onclick = () => { if (RB.boxes.length) exportOpenRally(rbNormalize()); };
+document.getElementById('rbGpx').onclick = () => { if (RB.boxes.length || (RB.track && RB.track.length > 1)) rbExportGPX(); else alert('Nothing to save yet: open a roadbook file or build one from a route.'); };
 map.on('dragstart', () => { spot.follow = false; });
 document.getElementById('rbOdo').onclick = () => { spot.follow = true; if (spot.last) map.setView(spot.last.p); };
 
@@ -1738,6 +1783,7 @@ document.getElementById('legendBtn').onclick = () => document.getElementById('le
 drawWaypoints(); setPlanning(false); refresh(); if (waypoints.length > 1) recompute();
 window.__acc = access; window.__rb = { buildRoadbook, tulipSVG, exportOpenRally, exportRoadbookPDF }; window.__tb = { graph, features, classify, cost, shortest, counts, cells }; // for debugging
 </script>
+<script>/*SYMBOLS_JS*/</script>
 <script>/*REVERSE_JS*/</script>
 </body>
 </html>
