@@ -981,6 +981,10 @@ function rrStartStates(box, mode) {
   }
   return st;
 }
+// Trip-meter factor bounds. Measured on the 4L Trophy 2026 official tracks (Étapes 1–3, 226 legs):
+// roadbook distances match the ground within 1–2 % on roads and ~4 % on pistes, so a route whose
+// distances drift by more than 6 % overall is a wrong route, not a miscalibrated trip meter.
+const RR_K_MIN = 0.94, RR_K_MAX = 1.06;
 async function rrMatch(onProgress) {
   const mode = $rr('rrMode').value, tol = Math.max(0.02, Math.min(0.4, (rrNum($rr('rrTol').value) || 10) / 100));
   const boxes = RR.boxes;
@@ -1035,7 +1039,7 @@ async function rrMatch(onProgress) {
           const av = rrAvoidNext(st.av, box, graph.nodes[w.cur]);
           const histBase = { i, v: w.cur, ll: graph.nodes[w.cur], dErr: w.acc - P, skipped: false };
           const gd = st.gdist + w.acc;
-          const k = Math.max(0.85, Math.min(1.15, (gd + 3000) / (box.km * 1000 + 3000)));
+          const k = Math.max(RR_K_MIN, Math.min(RR_K_MAX, (gd + 3000) / (box.km * 1000 + 3000)));
           const edges = w.same ? st.edges : st.edges.concat(w.edges);
           if (finish) {
             const c = base;
