@@ -329,14 +329,17 @@ function rrHeadingCost(a, b, cap, P) {
 // drifts, a few degrees and a few percent per leg. When a pinned box lies ahead, dead-reckon the remaining
 // legs from here to it, compare with where the pin really is, and give this leg its share of the gap,
 // in proportion to its length. Each leg re-measures from where the route really is, so legs matched on
-// mapped tracks are taken into account, and the last leg ends on the pin.
+// mapped tracks are taken into account, and the last leg ends on the pin. Only across pistes: a road
+// stretch before the pin bends where the road bends, so a chain through one is not closed.
 function rrClose(from, h, P, st, box, i, o, turn) {
   const B = o.boxes; if (!B) return null;
   const np = box.lock ? i : o.np; if (np == null) return null;
   const pin = B[np].lock, k = st.k || 1;
   let c = h, sx = 0, sy = 0, D = 0;
   for (let j = i; j <= np; j++) {
-    const bj = B[j], L = j === i ? P : Math.max(0, (bj.km - B[j - 1].km) * 1000 * k);
+    const bj = B[j];
+    if (j > i && bj.surf === 'road') return null; // a road stretch on the way: its shape is not a compass leg
+    const L = j === i ? P : Math.max(0, (bj.km - B[j - 1].km) * 1000 * k);
     const hj = c, r = hj * Math.PI / 180;
     sx += L * Math.sin(r); sy += L * Math.cos(r); D += L;
     const cap = rrCapOf(bj);
