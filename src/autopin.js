@@ -325,6 +325,32 @@ function rrHeadingCost(a, b, cap, P) {
   const sr = d / P; if (sr < 0.6) c += Math.min(3, ((0.6 - sr) / 0.3) ** 2);
   return c;
 }
+// Traverse closure (the compass-traverse adjustment surveyors use, Bowditch rule): a chain of compass legs
+// drifts, a few degrees and a few percent per leg. When a pinned box lies ahead, dead-reckon the remaining
+// legs from here to it, compare with where the pin really is, and give this leg its share of the gap,
+// in proportion to its length. Each leg re-measures from where the route really is, so legs matched on
+// mapped tracks are taken into account, and the last leg ends on the pin.
+function rrClose(from, h, P, st, box, i, o, turn) {
+  const B = o.boxes; if (!B) return null;
+  const np = box.lock ? i : o.np; if (np == null) return null;
+  const pin = B[np].lock, k = st.k || 1;
+  let c = h, sx = 0, sy = 0, D = 0;
+  for (let j = i; j <= np; j++) {
+    const bj = B[j], L = j === i ? P : Math.max(0, (bj.km - B[j - 1].km) * 1000 * k);
+    const hj = c, r = hj * Math.PI / 180;
+    sx += L * Math.sin(r); sy += L * Math.cos(r); D += L;
+    const cap = rrCapOf(bj);
+    c = cap != null ? cap : (bj.rel != null && !bj.ra ? (hj + bj.rel + 360) % 360 : hj);
+  }
+  if (D < 200 || D > 60000) return null;
+  const kx = Math.cos(from[0] * Math.PI / 180);
+  const tx = (pin[1] - from[1]) * 111320 * kx, ty = (pin[0] - from[0]) * 111320;
+  const ex = tx - sx, ey = ty - sy, gap = Math.hypot(ex, ey);
+  if (gap > 0.35 * D + 500) return null; // too far off to be drift: the pin or the distances are wrong
+  const r = h * Math.PI / 180, f = P / D;
+  const vx = P * Math.sin(r) + ex * f, vy = P * Math.cos(r) + ey * f;
+  return [from[0] + vy / 111320, from[1] + vx / (111320 * kx)];
+}
 function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   if (!rrOffWanted(st, box, prev)) return [];
   const turn = h => (box.rel != null && !box.ra ? (h + box.rel + 360) % 360 : h); // heading after this box
@@ -337,7 +363,7 @@ function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   }
   const h = st.offB != null ? st.offB : rrCapOf(prev);
   if (h == null || P < 30) return [];
-  const from = graph.nodes[st.v], p1 = rrDest(from, h, P);
+  const from = graph.nodes[st.v], p1 = rrClose(from, h, P, st, box, i, o, turn) || rrDest(from, h, P);
   rrCellsAround(p1, missing, RR_SRC[RR.src], 0.006); // load the map there, a track may be mapped
   const sn = rrSnap(p1, 60 + 0.1 * P, mode);
   const v = sn ? sn.v : graph.node(p1);

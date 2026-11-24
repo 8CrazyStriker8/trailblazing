@@ -1065,7 +1065,7 @@ async function rrMatch(onProgress) {
           for (const w of rrWalks(st, lo2, hi2, mode, finish, missing, anyNode)) if (w.acc < lo || w.acc > hi) take(w, true);
         }
         // off-piste: follow the compass heading for the box distance where no mapped track fits (or from a point off the network)
-        for (const c of rrOffPisteKids(st, box, boxes[i - 1], P, mode, finish, uTurn, missing, { tol, ptol, pad, i })) children.push(c);
+        for (const c of rrOffPisteKids(st, box, boxes[i - 1], P, mode, finish, uTurn, missing, { tol, ptol, pad, i, boxes, np: nextPin[i] })) children.push(c);
         // skipping this box (misread, or a junction missing from IGN) is allowed at a price
         // (a pinned box is a hard constraint: skipping it costs so much that any state reaching the pin wins)
         const skipCost = box.lock ? 400 : 7;
