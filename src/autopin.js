@@ -60,7 +60,7 @@ function rrPlaceRefs(notes) {
   if ((m = /\bcentre(?:-ville)?\s+(?:de\s+|d['’]\s*)?([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
   if ((m = /\ben sortie d['’]\s*([^]*)/i.exec(u))) add('town', m[1]);
   if ((m = /\b[Dd]ans\s+([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
-  if ((m = /^\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,3})\s*[.:]\s/.exec(u)) && m[1] !== m[1].toUpperCase()) add('town', m[1].replace(/^entr[ée]e\s+/i, ''));
+  if ((m = /^\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,3})\s*[.:]\s/.exec(u)) && m[1] !== m[1].toUpperCase() && !/^(TD|TJS|AD|AG|CS|CP)\b/.test(m[1])) add('town', m[1].replace(/^entr[ée]e\s+/i, '')); // not "AG Marrakech Médina." (a sign: the way to it)
   return { pins, avoid };
 }
 const RR_AP_WRAP = new Set(['peage', 'aire', 'de', 'du', 'des', 'la', 'le', 'les', 'el', 'service', 'services', 'repos', 'station', 'sortie', 'echangeur', 'gare', 'centre', 'ville', 'douar', 'ksar', 'kasba', 'kasbah', 'rest', 'area', 'toll', 'exit']);

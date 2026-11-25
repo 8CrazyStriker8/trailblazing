@@ -972,7 +972,7 @@ function rrShapeCost(box, arms, exN) {
     for (let j = 0; j < others.length; j++) {
       if (used[j]) continue;
       const d = Math.abs(relAngle(others[j].rel, drawn[k])); if (d > 60) continue;
-      used[j] = true; go(k + 1, acc + (d / 30) ** 2); used[j] = false;
+      used[j] = true; go(k + 1, acc + (d / ((window.RR_OPTS || {}).arm ?? 30)) ** 2); used[j] = false;
     }
   })(0, 0);
   return Math.min(5, best);
@@ -983,7 +983,7 @@ function rrScoreExit(box, ex, nbCount) { // cost of leaving box's junction by ex
     const keys = String(ex.e.rec.p.cpx_numero || '').split(/[;,/]/).map(rrRoadKey).filter(Boolean);
     c += keys.includes(rrRoadKey(box.road)) ? -0.5 : keys.length ? 1.2 : 0.4;
   }
-  if (box.rel != null && ex.rel != null) { const d = Math.abs(relAngle(ex.rel, box.rel)); if (d > 75) return Infinity; c += (d / 35) ** 2; }
+  if (box.rel != null && ex.rel != null) { const d = Math.abs(relAngle(ex.rel, box.rel)); if (d > 75) return Infinity; c += (d / ((window.RR_OPTS || {}).ang ?? 25)) ** 2; } // 25°: swept 25–50° on the six 4L 2026 étapes
   if (box.cap != null) { const d = Math.abs(relAngle(ex.outB, box.cap)); if (d > 80) return Infinity; c += (d / 30) ** 2 * 0.8; }
   if (box.surf && surfaceOf(ex.e.rec) !== box.surf && !(box.surf === 'path' && surfaceOf(ex.e.rec) === 'track')) c += 0.6;
   if (box.branches && box.branches.length && nbCount != null) c += 0.25 * Math.min(4, Math.abs(nbCount - 2 - box.branches.length));
@@ -1086,7 +1086,9 @@ async function rrMatch(onProgress) {
         const P = (box.km - st.lastKm) * 1000 * st.k;
         if (P < -5) continue;
         // a pinned box is where it is: its distance may be off (trip meter, misread), so look much wider
-        const ptol = box.lock ? Math.max(tol, 0.3) : tol, pad = box.lock ? 500 : 30;
+        const ptol = box.lock ? Math.max(tol, 0.3) : tol;
+        // the finish is where it is: whatever the trip meter drifted by over the stage (up to ~2 %), the route must get there
+        const pad = finish && box.lock && !(window.RR_OPTS || {}).noFinPad ? Math.min(5000, Math.max(500, box.km * 20)) : box.lock ? 500 : 30;
         // the distance is reset at each junction box; boxes in between (a fuel station, a village sign) are not
         // firm, so the uncertainty grows with the distance since the last junction box, as it does for a rider
         const anchorKm = st.anchorKm ?? st.lastKm, span = Math.max(P, (box.km - anchorKm) * 1000 * st.k);
@@ -1096,6 +1098,8 @@ async function rrMatch(onProgress) {
         const anyNode = finish || uTurn || box.rel == null || Math.abs(box.rel) <= 25 || !!box.lock;
         // a state off the network (off-piste) only goes on by compass, below
         const ends = st.out == null && !finish && P >= 1 ? [] : P < 1 ? (st.out == null ? [] : [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }]) : st.out == null ? [] : rrWalks(st, lo, hi, mode, finish, missing, anyNode, full);
+        // the finish at the same distance as the box before ("Entrez dans le circuit… Arrivée"): the route may still be short of it
+        if (finish && box.lock && P < 1 && st.out != null) for (const w of rrWalks(st, 0, hi, mode, finish, missing, true, full)) ends.push(w);
         let bestShape = Infinity;
         const take = (w, wide) => {
           const dErr = (w.acc - P) / slack;
@@ -1114,6 +1118,7 @@ async function rrMatch(onProgress) {
           const histBase = { i, v: w.cur, ll: graph.nodes[w.cur], dErr: w.acc - P, skipped: false };
           const gd = st.gdist + w.acc;
           const k = Math.max(RR_K_MIN, Math.min(RR_K_MAX, (gd + 3000) / (box.km * 1000 + 3000)));
+          { const kp = (window.RR_OPTS || {}).kPen ?? 0; if (kp && (box.surf === "road" || !(window.RR_OPTS || {}).kRoad)) base += kp * ((((gd + 3000) / (box.km * 1000 + 3000) - 1) / 0.03) ** 2 - (((st.k || 1) - 1) / 0.03) ** 2); }
           const edges = w.same ? st.edges : rrEdgesAdd(st.edges, w.edges);
           if (finish) {
             const c = base;

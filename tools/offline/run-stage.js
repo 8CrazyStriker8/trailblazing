@@ -45,7 +45,7 @@ function gpsTrace(u) {
     const sel = document.getElementById('rrSrc'); if (sel) { sel.value = 'osm'; sel.dispatchEvent(new Event('change')); }
     const auto = document.getElementById('rrAuto'); if (auto) auto.checked = true;
     OVERPASS.splice(0, OVERPASS.length, 'https://offline.invalid/api/interpreter');
-    const o = window.RR_OPTS || {}; RR.gps = o.gps !== 0; RR.gpsBefore = o.gpsBefore || '2026-01-01'; // 4L Trophy 2026 rebuilds: only traces recorded before the rally
+    const o = window.RR_OPTS || {}; if (o.tol) document.getElementById('rrTol').value = o.tol; RR.gps = o.gps !== 0; RR.gpsBefore = o.gpsBefore || '2026-01-01'; // 4L Trophy 2026 rebuilds: only traces recorded before the rally
     const boxes = B.map((b, i) => rrCleanBox({ num: i + 1, km: b[0], rel: b[1], cap: b[2], surf: b[3], ra: b[4], branches: b[5], notes: b[6] }));
     boxes[boxes.length - 1].lock = end; boxes[boxes.length - 1].lockR = 150;
     RR.secs = [{ name: 'stage', boxes }]; RR.cur = 0; RR.result = null; RR.layer.clearLayers(); RR.cancel = false;
