@@ -4014,7 +4014,7 @@ if (typeof module !== 'undefined') module.exports = { rrPlaceRefs, rrNameSim, rr
 // Without network data (offline, or nothing mapped) the boxes come from the shape of the track alone.
 // Pure helpers first (tested in tools/test-track2rb.js), then the parts that use the network.
 
-const T2R = { LOOK: 30, SNAP: 15, ARM_TOL: 50, MERGE: 25, OFF: 40, OFF_MIN: 150, TURN: 35, TURN_LOOK: 40, TURN_GAP: 120, CAP_EVERY: 5000 };
+const T2R = { LOOK: 30, SNAP: 15, ARM_TOL: 50, MERGE: 25, OFF: 40, OFF_MIN: 150, TURN: 35, TURN_LOOK: 40, TURN_GAP: 120, CAP_EVERY: 5000, JOIN_MIN: 500 };
 
 // track [[lat,lng]…] -> { pts, cum, total, at(d), brg(d0, d1) } with duplicate points removed
 function t2rLine(track) {
@@ -4190,17 +4190,14 @@ function t2rJunctions(T, idx, use) {
 
 // one box per roundabout: the junctions from the entry (leaving on the ring) to the exit (arriving on the ring)
 function t2rGroupRings(passes) {
+  // every pass that arrives or leaves on a roundabout ring, with the passes between them (split approach lanes)
+  const touch = p => t2rRing(p.inArm.e.rec) || t2rRing(p.outArm.e.rec);
   const out = [];
   for (let k = 0; k < passes.length; k++) {
-    const p = passes[k];
-    if (t2rRing(p.outArm.e.rec) && !t2rRing(p.inArm.e.rec)) {
-      let z = k + 1;
-      while (z < passes.length && passes[z].d - passes[z - 1].d < 400 && t2rRing(passes[z].inArm.e.rec) && t2rRing(passes[z].outArm.e.rec)) z++;
-      if (z < passes.length && passes[z].d - passes[z - 1].d < 400 && t2rRing(passes[z].inArm.e.rec) && !t2rRing(passes[z].outArm.e.rec)) {
-        out.push({ ring: passes.slice(k, z + 1) }); k = z; continue;
-      }
-    }
-    out.push(p);
+    if (!touch(passes[k])) { out.push(passes[k]); continue; }
+    let z = k, last = k;
+    while (z + 1 < passes.length && passes[z + 1].d - passes[last].d < 120) { z++; if (touch(passes[z])) last = z; }
+    out.push({ ring: passes.slice(k, last + 1), d: passes[k].d }); k = last;
   }
   return out;
 }
@@ -4209,27 +4206,38 @@ function t2rGroupRings(passes) {
 function t2rJunctionBox(T, p) {
   const box = { kind: 'junction' };
   if (p.ring) {
-    const g = p.ring, first = g[0], last = g[g.length - 1];
-    const c = [g.reduce((s, x) => s + graph.nodes[x.v][0], 0) / g.length, g.reduce((s, x) => s + graph.nodes[x.v][1], 0) / g.length];
-    const ref = first.ref, armEnd = (x, a) => walkBranch(x.v, a.n, T2R.LOOK);
-    const ang = (x, a) => relAngle(bearing(c, armEnd(x, a)), ref);
-    const branches = [];
-    for (const x of g) for (const a of x.others) if (!t2rRing(a.e.rec)) branches.push({ rel: ang(x, a), surface: surfaceOf(a.e.rec) });
-    const rel = ang(last, last.outArm);
-    // exits passed before the one taken; the in and out lanes of one road (split near the ring) count once
-    const dirs = []; for (const b of branches) if (!dirs.some(r => Math.abs(relAngle(r, b.rel)) < 25)) dirs.push(b.rel);
-    const passed = dirs.filter(r => Math.abs(relAngle(r, rel)) >= 25 && Math.abs(relAngle(r, 180)) >= 25).length;
-    Object.assign(box, { d: first.d, ll: graph.nodes[first.v], inRec: first.inArm.e.rec, outRec: last.outArm.e.rec, rel, branches, ra: true, raExit: passed + 1, ref });
+    const g = p.ring, d0 = g[0].d, d1 = g[g.length - 1].d;
+    const ringNodes = g.filter(x => [x.inArm, x.outArm, ...x.others].some(a => t2rRing(a.e.rec)));
+    const c = [ringNodes.reduce((s, x) => s + graph.nodes[x.v][0], 0) / ringNodes.length, ringNodes.reduce((s, x) => s + graph.nodes[x.v][1], 0) / ringNodes.length];
+    const ref = T.brg(Math.max(0, d0 - 60), Math.max(0, d0 - 5)) ?? g[0].ref; // heading arriving at the roundabout
+    const rel = relAngle(bearing(c, T.at(Math.min(T.total, d1 + 40))), ref); // where the exit taken leaves the ring
+    const branches = [], dirs = [];
+    for (const x of g) for (const a of [x.inArm, x.outArm, ...x.others]) {
+      if (t2rRing(a.e.rec)) continue;
+      const r = relAngle(bearing(c, walkBranch(x.v, a.n, T2R.LOOK)), ref);
+      if (Math.abs(relAngle(r, 180)) < 30 || Math.abs(relAngle(r, rel)) < 30) continue; // the way in and the way out
+      if (dirs.some(q => Math.abs(relAngle(q, r)) < 25)) continue; // in and out lanes of one road count once
+      dirs.push(r); branches.push({ rel: r, surface: surfaceOf(a.e.rec) });
+    }
+    const first = g.find(x => !t2rRing(x.inArm.e.rec)), lastOut = [...g].reverse().find(x => !t2rRing(x.outArm.e.rec));
+    // exits passed before the one taken, driving anticlockwise from the entry (right-hand traffic)
+    const ccw = r => (360 - ((r + 180) % 360 + 360) % 360) % 360; // angle travelled anticlockwise from the entry
+    const passed = dirs.filter(r => ccw(r) < ccw(rel)).length;
+    Object.assign(box, { d: d0, ll: graph.nodes[g[0].v], inRec: first ? first.inArm.e.rec : null, outRec: lastOut ? lastOut.outArm.e.rec : null, rel, branches, ra: true, raExit: passed + 1, ref });
     return box;
   }
   Object.assign(box, { d: p.d, ll: graph.nodes[p.v], inRec: p.inArm.e.rec, outRec: p.outArm.e.rec });
   const rel = relAngle(p.outArm.b, p.ref), sv = Math.abs(rel);
   let others = p.others;
-  // going straight on: only branches about as important as the way followed are worth a box
-  if (sv < 20) {
-    const imp = Math.max(t2rImp(p.inArm.e.rec), t2rImp(p.outArm.e.rec)), onRoad = surfaceOf(p.outArm.e.rec) === 'road';
-    others = others.filter(a => t2rImp(a.e.rec) - imp <= 1 && !(onRoad && t2rMinor(a.e.rec)));
-    if (!others.length) return null;
+  // following the same road (straight on, or along its bend): a box only where the choice is not obvious
+  const inR = p.inArm.e.rec, outR = p.outArm.e.rec, imp = Math.max(t2rImp(inR), t2rImp(outR)), onRoad = surfaceOf(outR) === 'road';
+  const same = inR === outR || (roadName(inR) && roadName(inR) === roadName(outR)) || (t2rImp(inR) === t2rImp(outR) && surfaceOf(inR) === surfaceOf(outR));
+  const straighter = others.some(a => Math.abs(relAngle(a.b, p.ref)) < sv);
+  if (sv < 20 || (same && sv < 50 && !straighter)) {
+    const fork = others.some(a => Math.abs(relAngle(a.b, p.outArm.b)) < 35 && !(onRoad && t2rMinor(a.e.rec)) && t2rImp(a.e.rec) <= imp);
+    // a crossing worth a box: a bigger road; one as big on a main road; any track off a track (desert forks)
+    const worth = a => !(onRoad && t2rMinor(a.e.rec)) && (t2rImp(a.e.rec) < imp || (t2rImp(a.e.rec) === imp && (imp <= 4 || !onRoad)));
+    if (!fork && !others.some(worth)) return null;
   }
   return Object.assign(box, { rel, branches: p.others.map(a => ({ rel: relAngle(a.b, p.ref), surface: surfaceOf(a.e.rec) })), ref: p.ref });
 }
@@ -4242,7 +4250,10 @@ function t2rOffRuns(T, idx) {
     if (off && start == null) start = d;
     if (!off && start != null) { if (d - start >= T2R.OFF_MIN) runs.push({ d0: start, d1: Math.min(d, T.total) }); start = null; }
   }
-  return runs;
+  // a few hundred metres on a mapped way between two off-piste parts (crossing or brushing a track) is not joining it
+  const out = [];
+  for (const r of runs) { const l = out[out.length - 1]; if (l && r.d0 - l.d1 < T2R.JOIN_MIN) l.d1 = r.d1; else out.push(r); }
+  return out;
 }
 
 // raw boxes -> roadbook boxes (same shape as the planner's boxes), with notes and symbols
@@ -4258,6 +4269,11 @@ function t2rFinish(T, raw) {
     }
     merged.push(b);
   }
+  const rings = merged.filter(b => b.ra);
+  for (let k = merged.length - 1; k >= 0; k--) {
+    const b = merged[k];
+    if (b.kind === 'junction' && !b.ra && !b.off && Math.abs(b.rel || 0) < 60 && rings.some(r => Math.abs(r.d - b.d) < 80)) merged.splice(k, 1);
+  }
   return merged.map((b, k) => {
     const { inB, outB } = t2rInOut(T, b.d, 60);
     const rel = b.rel != null ? b.rel : inB != null && outB != null ? relAngle(outB, inB) : 0;
@@ -4265,7 +4281,7 @@ function t2rFinish(T, raw) {
     const surf = r => (r ? surfaceOf(r) : null);
     const inSurf = b.inSurf || surf(b.inRec) || 'track', outSurf = b.outSurf || surf(b.outRec) || 'track';
     const notes = [], sym = [];
-    if (b.kind === 'start') notes.push('START');
+    if (b.kind === 'start') { notes.push('START'); if (b.offStart && cap != null) notes.push(`Off-piste, CAP ${String(cap).padStart(3, '0')}`); }
     else if (b.kind === 'finish') notes.push('FINISH');
     else if (b.ra) { notes.push(`Roundabout, ${t2rOrdinal(b.raExit)} exit`); sym.push(typeof rrRaDirSym === 'function' ? rrRaDirSym(rel) : 'roundabout'); if (b.raExit <= 6) sym.push('roundabout_exit' + b.raExit); }
     else if (b.off === 'leave') { notes.push(`Off-piste, CAP ${String(cap).padStart(3, '0')}`); if (Math.abs(rel) >= 20) notes.push(turnWord(rel)); sym.push('offtrack'); }
@@ -4312,8 +4328,9 @@ async function trackToRoadbook(track, opts = {}) {
   for (const r of runs) {
     const whole = r.all || allOff;
     if (!whole) {
-      if (r.d0 > 10) raw.push({ kind: 'junction', d: r.d0, off: 'leave', outSurf: 'path' });
-      if (r.d1 < T.total - 10) raw.push({ kind: 'junction', d: r.d1, off: 'join', inSurf: 'path', outRec: recAt(Math.min(T.total, r.d1 + 30)) });
+      if (r.d0 > T2R.OFF_MIN) raw.push({ kind: 'junction', d: r.d0, off: 'leave', outSurf: 'path' });
+      else { raw[0].offStart = true; raw[0].outRec = null; raw[0].outSurf = 'path'; }
+      if (r.d1 < T.total - T2R.OFF_MIN) raw.push({ kind: 'junction', d: r.d1, off: 'join', inSurf: 'path', outRec: recAt(Math.min(T.total, r.d1 + 30)) });
     }
     const surf = whole && opts.network === false ? 'track' : 'path';
     let lastD = r.d0;
