@@ -3240,6 +3240,7 @@ function rrCellsAround(ll, missing, src, r = 0.004, full = false) { // note unlo
     // full: cells that hold only the main roads (loaded along a long road stretch) count as missing too
     if (st == null || (full && st === 'main')) missing.set(k, [i * S, j * S, (i + 1) * S, (j + 1) * S]);
   }
+  if (full && src === RR_SRC.osm) rrGpsNote(ll);
 }
 const OSM_HW = { // highway=* -> [BD TOPO nature, importance]
   motorway: ['Type autoroutier', 1], motorway_link: ['Bretelle', 1], trunk: ['Route à 2 chaussées', 1], trunk_link: ['Bretelle', 1],
@@ -3297,6 +3298,73 @@ function rrOsmLoadKeys(keys, c) {
   const pr = overpassBusy.then(run, run); // one Overpass request at a time, shared with the access check (fair use)
   overpassBusy = pr.catch(() => {});
   return pr.catch(() => {});
+}
+// ---------- Public GPS traces (OpenStreetMap) ----------
+// Desert pistes are often missing from the map but people have driven them: the public GPS traces uploaded
+// to OpenStreetMap become extra tracks where the route is on piste. Each trace is thinned to a point every
+// ~20 m, cut where it jumps (signal lost), and its points are snapped to roads, tracks or other traces
+// within 20 m so it joins the network. RR.gpsBefore (ISO date) keeps only traces recorded before it.
+const RR_GPS_BLOCK = 0.1, RR_GPS_PAGES = 4, rrGpsState = new Map(), rrGpsWant = new Map();
+let rrGpsN = 0;
+function rrGpsNote(ll) { // a piste is near ll: ask for the traces of its 0.1° block
+  if (RR.gps === false || RR.src !== 'osm') return;
+  const i = Math.floor(ll[0] / RR_GPS_BLOCK), j = Math.floor(ll[1] / RR_GPS_BLOCK), k = `${i}_${j}`;
+  if (!rrGpsState.has(k)) rrGpsWant.set(k, [i * RR_GPS_BLOCK, j * RR_GPS_BLOCK, (i + 1) * RR_GPS_BLOCK, (j + 1) * RR_GPS_BLOCK]);
+}
+function rrGpsLines(xml, before) { // GPX text -> [[lat, lng], ...] lines
+  const out = [], doc = new DOMParser().parseFromString(xml, 'application/xml');
+  for (const seg of doc.getElementsByTagName('trkseg')) {
+    let line = [], last = null, lastT = null;
+    for (const p of seg.getElementsByTagName('trkpt')) {
+      const ll = [+p.getAttribute('lat'), +p.getAttribute('lon')], tEl = p.getElementsByTagName('time')[0], t = tEl ? tEl.textContent : null;
+      if (!t || (before && t >= before)) { if (line.length > 1) out.push(line); line = []; last = null; continue; } // no time: points sorted by place, not a line
+      const tt = Date.parse(t);
+      if (last && (hav(last, ll) > 250 || Math.abs(tt - lastT) > 180000)) { if (line.length > 1) out.push(line); line = []; last = null; }
+      if (!last || hav(line[line.length - 1], ll) >= 20) line.push(ll);
+      last = ll; lastT = tt;
+    }
+    if (line.length > 1) out.push(line);
+  }
+  return out;
+}
+async function rrGpsLoad(list, mode) {
+  for (const [k, bb] of list) {
+    rrGpsState.set(k, 'loading'); rrGpsWant.delete(k);
+    const lines = [];
+    try {
+      for (let page = 0; page < RR_GPS_PAGES; page++) {
+        const r = await fetchT(`https://api.openstreetmap.org/api/0.6/trackpoints?bbox=${bb[1].toFixed(4)},${bb[0].toFixed(4)},${bb[3].toFixed(4)},${bb[2].toFixed(4)}&page=${page}`, {}, 60000);
+        if (!r.ok) throw new Error('OSM GPS HTTP ' + r.status);
+        const xml = await r.text();
+        lines.push(...rrGpsLines(xml, RR.gpsBefore));
+        if ((xml.match(/<trkpt/g) || []).length < 5000) break; // last page
+      }
+    } catch (err) { console.warn(err); }
+    // keep only what is new: the stretches of a trace more than 30 m from any road, track or trace already
+    // there (200 m or longer), joined to the network at both ends. Driven tracks are traced many times over,
+    // and keeping every copy makes a mesh of tiny loops the matcher cannot walk through.
+    for (const line of lines) {
+      const near = line.map(p => rrSnap(p, 30, mode));
+      let a = 0;
+      while (a < line.length) {
+        if (near[a]) { a++; continue; }
+        let b = a; while (b + 1 < line.length && !near[b + 1]) b++;
+        const run = line.slice(a, b + 1);
+        if (a > 0) run.unshift(graph.nodes[near[a - 1].v]);
+        if (b + 1 < line.length) run.push(graph.nodes[near[b + 1].v]);
+        let len = 0; for (let q = 1; q < run.length; q++) len += hav(run[q - 1], run[q]);
+        if (len >= 200) {
+          const id = 'gps' + (++rrGpsN);
+          addFeatures([{ type: 'Feature', id, geometry: { type: 'LineString', coordinates: run.map(p => [p[1], p[0]]) },
+            properties: { cleabs: id, source: 'osm', osm_id: '', nature: 'Chemin', importance: '6', etat_de_l_objet: 'En service', prive: 'false',
+              nom_collaboratif_gauche: 'public GPS trace', cpx_numero: '', osm_highway: 'track', osm_surface: '', osm_tracktype: '', osm_access: '', gps: 'true' } }]);
+          for (let q = a; q <= b; q++) near[q] = null; // later traces snap onto this one through the graph
+        }
+        a = b + 1;
+      }
+    }
+    rrGpsState.set(k, 'done');
+  }
 }
 function rrHasData(src, ll, radius) { // any usable section of this source within radius metres?
   for (let i = 0; i < graph.nodes.length; i++) {
@@ -3492,8 +3560,12 @@ async function rrMatch(onProgress) {
           const dErr = (w.acc - P) / slack;
           let base = dErr * dErr + 1.2 * w.pen;
           // on pistes with a heading, a track that wanders off it or loops back is worth less than the compass
-          if (capPrev != null && P > 250 && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P);
+          const gpsLeg = !!(w.edges && w.edges.some(e => e.rec.p.gps));
+          // on pistes with a heading, a track that wanders off it or loops back is worth less than the compass
+          // (a public GPS trace more so: it may be a tourist's detour, not the rally's line)
+          if (capPrev != null && P > (gpsLeg ? 100 : 250) && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P) * (gpsLeg ? (window.RR_OPTS || {}).gpsHead ?? 3 : 1);
           if (!w.junction) base += (box.rel != null && Math.abs(box.rel) > 25 && !uTurn) ? Infinity : 1.2;
+          if (gpsLeg) base += (window.RR_OPTS || {}).gpsCost ?? 0.8; // a public GPS trace: someone drove there, but maybe not the rally
           if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[w.cur]); if (d > R) return; base += (d / Math.max(35, R / 3)) ** 2; } // lockR: pin radius (m), e.g. a whole interchange
           if (!isFinite(base)) return;
           base += rrAvoidCost(st.av, graph.nodes[w.cur], box.km); // heading for the branch the roadbook says not to take
@@ -3538,7 +3610,12 @@ async function rrMatch(onProgress) {
       }
       // load the missing data cells the walks ran into, then redo this box
       const need = [...missing].filter(([k]) => src.state(k) == null).slice(0, src.batch);
-      if (!need.length) break;
+      if (!need.length) {
+        if (!rrGpsWant.size) break;
+        const g = [...rrGpsWant].slice(0, 4);
+        onProgress(`Loading public GPS traces around box ${i + 1}… (${g.length} area${g.length > 1 ? 's' : ''})`);
+        await rrGpsLoad(g, mode); continue;
+      }
       onProgress(`Loading ${src.name} data around box ${i + 1}… (${need.length} area${need.length > 1 ? 's' : ''})`);
       await src.load(need);
     }

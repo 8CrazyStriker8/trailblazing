@@ -11,6 +11,18 @@ const ask = body => new Promise((res, rej) => {
     x => { const ch = []; x.on('data', c => ch.push(c)); x.on('end', () => res({ status: x.statusCode, type: x.headers['content-type'], body: Buffer.concat(ch) })); });
   r.on('error', rej); r.end(body);
 });
+// public GPS traces: fetched once from the OpenStreetMap API (about one request a second) and kept on disk
+const GPS_CACHE = process.env.GPS_CACHE || path.join(__dirname, '.gpscache');
+let gpsLast = 0;
+function gpsTrace(u) {
+  fs.mkdirSync(GPS_CACHE, { recursive: true });
+  const f = path.join(GPS_CACHE, require('crypto').createHash('sha1').update(u).digest('hex') + '.gpx');
+  if (fs.existsSync(f)) return fs.readFileSync(f);
+  const wait = gpsLast + 1100 - Date.now(); if (wait > 0) require('child_process').execFileSync('sleep', [String(wait / 1000)]);
+  gpsLast = Date.now();
+  try { const b = require('child_process').execFileSync('curl', ['-sf', '-m', '60', '-A', 'trailblazing-offline-test', u], { maxBuffer: 64 << 20 }); fs.writeFileSync(f, b); return b; }
+  catch (e) { console.error('GPS traces: ' + u + ' failed'); return '<gpx></gpx>'; }
+}
 (async () => {
   const B = JSON.parse(fs.readFileSync(boxFile, 'utf8'));
   const browser = await chromium.launch({ args: ['--js-flags=--max-old-space-size=8192'] });
@@ -20,6 +32,7 @@ const ask = body => new Promise((res, rej) => {
     const u = route.request().url();
     if (u.startsWith('file:')) return route.continue();
     if (/\/interpreter/.test(u)) { const a = await ask(route.request().postData() || ''); return route.fulfill({ status: a.status, contentType: a.type, body: a.body, headers: { 'Access-Control-Allow-Origin': '*' } }); }
+    if (/api\.openstreetmap\.org\/api\/0\.6\/trackpoints/.test(u)) return route.fulfill({ status: 200, contentType: 'application/gpx+xml', body: gpsTrace(u), headers: { 'Access-Control-Allow-Origin': '*' } });
     return route.abort(); // map tiles, IGN, anything else: not needed to rebuild
   });
   await page.addInitScript(o => { window.RR_OPTS = o; }, JSON.parse(process.env.RR_OPTS || '{}')); // experiment switches
@@ -32,6 +45,7 @@ const ask = body => new Promise((res, rej) => {
     const sel = document.getElementById('rrSrc'); if (sel) { sel.value = 'osm'; sel.dispatchEvent(new Event('change')); }
     const auto = document.getElementById('rrAuto'); if (auto) auto.checked = true;
     OVERPASS.splice(0, OVERPASS.length, 'https://offline.invalid/api/interpreter');
+    const o = window.RR_OPTS || {}; RR.gps = o.gps !== 0; RR.gpsBefore = o.gpsBefore || '2026-01-01'; // 4L Trophy 2026 rebuilds: only traces recorded before the rally
     const boxes = B.map((b, i) => rrCleanBox({ num: i + 1, km: b[0], rel: b[1], cap: b[2], surf: b[3], ra: b[4], branches: b[5], notes: b[6] }));
     boxes[boxes.length - 1].lock = end; boxes[boxes.length - 1].lockR = 150;
     RR.secs = [{ name: 'stage', boxes }]; RR.cur = 0; RR.result = null; RR.layer.clearLayers(); RR.cancel = false;
