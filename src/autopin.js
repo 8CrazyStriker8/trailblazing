@@ -273,7 +273,7 @@ async function rrLoadCorridor(onProgress) {
       const key = `${i}_${k}`; if (rrOsmState.get(key)) continue;
       const c = [(i + 0.5) * S, (k + 0.5) * S];
       if (keep.some(p => hav(p, c) < 3500)) continue;
-      rrOsmState.set(key, 'done'); n++;
+      rrOsmState.set(key, 'main'); n++; // main roads only: loaded in full when a compass leg or a track needs it
     }
   }
   return n;
@@ -371,7 +371,7 @@ function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   const h = st.offB != null ? st.offB : rrCapOf(prev);
   if (h == null || P < 30) return [];
   const from = graph.nodes[st.v], p1 = rrClose(from, h, P, st, box, i, o, turn) || rrDest(from, h, P);
-  rrCellsAround(p1, missing, RR_SRC[RR.src], 0.006); // load the map there, a track may be mapped
+  rrCellsAround(p1, missing, RR_SRC[RR.src], 0.006, true); // load the map there in full, a track or small road may be mapped
   const sn = rrSnap(p1, 60 + 0.1 * P, mode);
   const v = sn ? sn.v : graph.node(p1);
   const len = hav(from, graph.nodes[v]);

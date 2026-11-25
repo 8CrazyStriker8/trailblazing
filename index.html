@@ -3227,17 +3227,18 @@ function rrBack(path, d) { // node about d metres back along a walk (array of no
 }
 // Data sources: IGN BD TOPO cells (the app's own loader) or OpenStreetMap ways from Overpass,
 // converted to BD TOPO-like features so the map, the planner and the roadbook export work on them too.
-const RR_OSM_CELL = 0.02, rrOsmState = new Map(), rrOsmFails = new Map(); // key -> 'loading' | 'done' | 'error'; key -> failed loads
+const RR_OSM_CELL = 0.02, rrOsmState = new Map(), rrOsmFails = new Map(); // key -> 'loading' | 'done' | 'main' (main roads only) | 'error'; key -> failed loads
 const RR_SRC = {
   ign: { name: 'IGN', size: () => CELL, state: k => cells.get(k), load: list => requestCells(list), batch: 48 },
   // a cell the busy server refused is asked again later (up to 3 times): a missing town centre loses the route
   osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => { const s = rrOsmState.get(k); return s === 'error' && (rrOsmFails.get(k) || 0) < 3 ? undefined : s; }, load: list => rrOsmLoadMany(list), batch: 12 },
 };
-function rrCellsAround(ll, missing, src, r = 0.004) { // note unloaded data cells within ~r degrees of a point
+function rrCellsAround(ll, missing, src, r = 0.004, full = false) { // note unloaded data cells within ~r degrees of a point
   const S = src.size();
   for (const dy of [-r, 0, r]) for (const dx of [-r * 1.5, 0, r * 1.5]) {
-    const i = Math.floor((ll[0] + dy) / S), j = Math.floor((ll[1] + dx) / S), k = `${i}_${j}`;
-    if (src.state(k) == null) missing.set(k, [i * S, j * S, (i + 1) * S, (j + 1) * S]);
+    const i = Math.floor((ll[0] + dy) / S), j = Math.floor((ll[1] + dx) / S), k = `${i}_${j}`, st = src.state(k);
+    // full: cells that hold only the main roads (loaded along a long road stretch) count as missing too
+    if (st == null || (full && st === 'main')) missing.set(k, [i * S, j * S, (i + 1) * S, (j + 1) * S]);
   }
 }
 const OSM_HW = { // highway=* -> [BD TOPO nature, importance]
@@ -3380,13 +3381,13 @@ function rrScoreExit(box, ex, nbCount) { // cost of leaving box's junction by ex
   return c;
 }
 // all walks from state st covering [lo, hi] metres; returns candidate end points and missing data cells
-function rrWalks(st, lo, hi, mode, finish, missing, anyNode) {
+function rrWalks(st, lo, hi, mode, finish, missing, anyNode, full = false) {
   const ends = [], seen = new Map(); const stack = [{ prev: st.v, cur: st.out, acc: st.firstLen, pen: 0, path: [st.v, st.out], edges: [st.outEdge] }];
   let guard = 0;
   while (stack.length && ends.length < RR_MAXCAND && guard++ < 60000) {
     const w = stack.pop();
     const here = graph.nodes[w.cur];
-    rrCellsAround(here, missing, RR_SRC[RR.src]);
+    rrCellsAround(here, missing, RR_SRC[RR.src], 0.004, full);
     const nb = rrNb(w.cur, mode); nb.delete(w.prev);
     const isJ = neighbours(w.cur).size >= 3; // a junction on the ground, even if the side branch is a footpath
     if (w.acc >= lo && w.acc <= hi && (isJ || anyNode || nb.size === 0)) {
@@ -3471,6 +3472,7 @@ async function rrMatch(onProgress) {
     for (let round = 0; round < (RR.src === 'osm' ? 10 : 5); round++) {
       const missing = new Map(); children = [];
       const capPrev = /^(track|path)$/.test(box.surf || '') || /^(track|path)$/.test(boxes[i - 1].surf || '') ? rrCapOf(boxes[i - 1]) : null;
+      const full = /^(track|path)$/.test(box.surf || '') || /^(track|path)$/.test(boxes[i - 1].surf || ''); // pistes: the main-roads-only areas are not enough
       for (const st of beam) {
         const P = (box.km - st.lastKm) * 1000 * st.k;
         if (P < -5) continue;
@@ -3484,7 +3486,7 @@ async function rrMatch(onProgress) {
         const uTurn = box.rel != null && Math.abs(box.rel) >= 150;
         const anyNode = finish || uTurn || box.rel == null || Math.abs(box.rel) <= 25 || !!box.lock;
         // a state off the network (off-piste) only goes on by compass, below
-        const ends = st.out == null && !finish && P >= 1 ? [] : P < 1 ? (st.out == null ? [] : [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }]) : st.out == null ? [] : rrWalks(st, lo, hi, mode, finish, missing, anyNode);
+        const ends = st.out == null && !finish && P >= 1 ? [] : P < 1 ? (st.out == null ? [] : [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }]) : st.out == null ? [] : rrWalks(st, lo, hi, mode, finish, missing, anyNode, full);
         let bestShape = Infinity;
         const take = (w, wide) => {
           const dErr = (w.acc - P) / slack;
@@ -3525,7 +3527,7 @@ async function rrMatch(onProgress) {
         // like a rider who does not see the junction drawn: look a bit further either side for one that does look like it
         if (!finish && st.out != null && P >= 1 && rrIsJunctionBox(box) && bestShape > 1.5) {
           const lo2 = Math.max(0, P - 2 * slack), hi2 = P + 2 * slack;
-          for (const w of rrWalks(st, lo2, hi2, mode, finish, missing, anyNode)) if (w.acc < lo || w.acc > hi) take(w, true);
+          for (const w of rrWalks(st, lo2, hi2, mode, finish, missing, anyNode, full)) if (w.acc < lo || w.acc > hi) take(w, true);
         }
         // off-piste: follow the compass heading for the box distance where no mapped track fits (or from a point off the network)
         for (const c of rrOffPisteKids(st, box, boxes[i - 1], P, mode, finish, uTurn, missing, { tol, ptol, pad, i, boxes, np: nextPin[i] })) children.push(c);
@@ -3910,7 +3912,7 @@ async function rrLoadCorridor(onProgress) {
       const key = `${i}_${k}`; if (rrOsmState.get(key)) continue;
       const c = [(i + 0.5) * S, (k + 0.5) * S];
       if (keep.some(p => hav(p, c) < 3500)) continue;
-      rrOsmState.set(key, 'done'); n++;
+      rrOsmState.set(key, 'main'); n++; // main roads only: loaded in full when a compass leg or a track needs it
     }
   }
   return n;
@@ -4008,7 +4010,7 @@ function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   const h = st.offB != null ? st.offB : rrCapOf(prev);
   if (h == null || P < 30) return [];
   const from = graph.nodes[st.v], p1 = rrClose(from, h, P, st, box, i, o, turn) || rrDest(from, h, P);
-  rrCellsAround(p1, missing, RR_SRC[RR.src], 0.006); // load the map there, a track may be mapped
+  rrCellsAround(p1, missing, RR_SRC[RR.src], 0.006, true); // load the map there in full, a track or small road may be mapped
   const sn = rrSnap(p1, 60 + 0.1 * P, mode);
   const v = sn ? sn.v : graph.node(p1);
   const len = hav(from, graph.nodes[v]);
