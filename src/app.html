@@ -1212,7 +1212,6 @@ function tulipShapes(b) {
     const st = LINE_STYLE[br.surface] || LINE_STYLE.road;
     out.push({ t: 'line', a: [cx, cy], b: at(br.rel, R * 0.8), w: st.w, dash: st.dash, color: '#888' });
   }
-  if (b.ra) out.push({ t: 'ring', c: [cx, cy], r: 10 });
   if (b.kind !== 'start') {
     const st = LINE_STYLE[b.inSurf] || LINE_STYLE.road;
     out.push({ t: 'line', a: [cx, cy + R], b: [cx, cy], w: st.w + 1.2, dash: st.dash, color: '#000' });
@@ -1231,6 +1230,7 @@ function tulipShapes(b) {
     out.push({ t: 'line', a: [cx - 12, cy - 24], b: [cx - 12, cy], w: 1.5, dash: null, color: '#000' });
     out.push({ t: 'box', x: cx - 12, y: cy - 24, w: 24, h: 18 });
   }
+  if (b.ra) out.push({ t: 'ring', c: [cx, cy], r: 10 }); // on top: the lines start at the ring
   return out;
 }
 function tulipSVG(b, size = 100) {

@@ -195,18 +195,27 @@ function t2rGroupRings(passes) {
 }
 
 // box from a junction pass (or a roundabout group); null when it is not worth a box
-function t2rJunctionBox(T, p) {
+function t2rJunctionBox(T, p, use) {
   const box = { kind: 'junction' };
   if (p.ring) {
     const g = p.ring, d0 = g[0].d, d1 = g[g.length - 1].d;
     const ringNodes = g.filter(x => [x.inArm, x.outArm, ...x.others].some(a => t2rRing(a.e.rec)));
     const c = [ringNodes.reduce((s, x) => s + graph.nodes[x.v][0], 0) / ringNodes.length, ringNodes.reduce((s, x) => s + graph.nodes[x.v][1], 0) / ringNodes.length];
     const ref = T.brg(Math.max(0, d0 - 60), Math.max(0, d0 - 5)) ?? g[0].ref; // heading arriving at the roundabout
+    // the whole ring (it can be several ways): every way leaving it is drawn and counted
+    const seen = new Set(ringNodes.map(x => x.v)), todo = [...seen], arms = [];
+    while (todo.length && seen.size < 400) {
+      const v = todo.pop();
+      for (const e of graph.adj[v]) if (t2rRing(e.rec) && !seen.has(e.to)) { seen.add(e.to); todo.push(e.to); }
+    }
+    const ring = [...seen];
+    if (ring.length > 2) c.splice(0, 2, ring.reduce((s, v) => s + graph.nodes[v][0], 0) / ring.length, ring.reduce((s, v) => s + graph.nodes[v][1], 0) / ring.length);
+    for (const v of ring) for (const a of t2rArms(v, use)) arms.push({ v, a });
     const rel = relAngle(bearing(c, T.at(Math.min(T.total, d1 + 40))), ref); // where the exit taken leaves the ring
     const branches = [], dirs = [];
-    for (const x of g) for (const a of [x.inArm, x.outArm, ...x.others]) {
-      if (t2rRing(a.e.rec)) continue;
-      const r = relAngle(bearing(c, walkBranch(x.v, a.n, T2R.LOOK)), ref);
+    for (const { v, a } of arms) {
+      if (t2rRing(a.e.rec) || seen.has(a.n)) continue;
+      const r = relAngle(bearing(c, walkBranch(v, a.n, T2R.LOOK)), ref);
       if (Math.abs(relAngle(r, 180)) < 30 || Math.abs(relAngle(r, rel)) < 30) continue; // the way in and the way out
       if (dirs.some(q => Math.abs(relAngle(q, r)) < 25)) continue; // in and out lanes of one road count once
       dirs.push(r); branches.push({ rel: r, surface: surfaceOf(a.e.rec) });
@@ -215,7 +224,7 @@ function t2rJunctionBox(T, p) {
     // exits passed before the one taken, driving anticlockwise from the entry (right-hand traffic)
     const ccw = r => (360 - ((r + 180) % 360 + 360) % 360) % 360; // angle travelled anticlockwise from the entry
     const passed = dirs.filter(r => ccw(r) < ccw(rel)).length;
-    Object.assign(box, { d: d0, ll: graph.nodes[g[0].v], inRec: first ? first.inArm.e.rec : null, outRec: lastOut ? lastOut.outArm.e.rec : null, rel, branches, ra: true, raExit: passed + 1, ref });
+    Object.assign(box, { d: d0, ll: graph.nodes[g[0].v], inRec: first ? first.inArm.e.rec : g[0].inArm.e.rec, outRec: lastOut ? lastOut.outArm.e.rec : g[g.length - 1].outArm.e.rec, rel, branches, ra: true, raExit: passed + 1, ref });
     return box;
   }
   Object.assign(box, { d: p.d, ll: graph.nodes[p.v], inRec: p.inArm.e.rec, outRec: p.outArm.e.rec });
@@ -226,6 +235,8 @@ function t2rJunctionBox(T, p) {
   const same = inR === outR || (roadName(inR) && roadName(inR) === roadName(outR)) || (t2rImp(inR) === t2rImp(outR) && surfaceOf(inR) === surfaceOf(outR));
   const straighter = others.some(a => Math.abs(relAngle(a.b, p.ref)) < sv);
   if (sv < 20 || (same && sv < 50 && !straighter)) {
+    const isLink = a => /_link$/.test(a.e.rec.p.osm_highway || '') || norm(a.e.rec.p.nature) === 'bretelle';
+    others = others.filter(a => !isLink(a));
     const fork = others.some(a => Math.abs(relAngle(a.b, p.outArm.b)) < 35 && !(onRoad && t2rMinor(a.e.rec)) && t2rImp(a.e.rec) <= imp);
     // a crossing worth a box: a bigger road; one as big on a main road; any track off a track (desert forks)
     const worth = a => !(onRoad && t2rMinor(a.e.rec)) && (t2rImp(a.e.rec) < imp || (t2rImp(a.e.rec) === imp && (imp <= 4 || !onRoad)));
@@ -307,7 +318,7 @@ async function trackToRoadbook(track, opts = {}) {
   // where the track is on the network: one box per junction where it turns or a comparable way branches off
   const passes = opts.network === false ? [] : t2rGroupRings(t2rJunctions(T, idx, use));
   for (const p of passes) {
-    const b = t2rJunctionBox(T, p); if (!b) continue;
+    const b = t2rJunctionBox(T, p, use); if (!b) continue;
     b.outB = p.ring ? null : p.outArm.b;
     raw.push(b);
   }
