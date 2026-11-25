@@ -165,7 +165,7 @@
   <div class="row"><button id="rbSpot">● Start spotting</button><button id="rbAdd" style="display:none;flex:1;font-weight:700;background:#e8590c;color:#fff;border-color:#e8590c">+ Box</button></div>
   <div id="rbOdo" class="muted" style="cursor:pointer"></div>
   <div id="rbList"></div>
-  <div class="row"><button id="rbFromRoute">From route</button><label class="filebtn"><span>Open file…</span><input type="file" id="rbOpenFile" accept=".gpx,.xml,application/gpx+xml,application/xml,text/xml" hidden></label><button id="rbNew">New</button></div>
+  <div class="row"><button id="rbFromRoute">From route</button><button id="rbFromTrack" title="Build roadbook boxes (junctions, roundabouts, off-piste, tulips) from the track of the GPX you opened">From track</button><label class="filebtn"><span>Open file…</span><input type="file" id="rbOpenFile" accept=".gpx,.xml,application/gpx+xml,application/xml,text/xml" hidden></label><button id="rbNew">New</button></div>
   <div class="row"><button id="rbPdf">⬇ PDF</button><button id="rbOr">⬇ OpenRally</button><button id="rbGpx" title="Save the roadbook's track and boxes as a plain GPX">⬇ GPX</button></div>
 </div>
 <div id="rbEdit" class="panel"></div>
@@ -1212,6 +1212,7 @@ function tulipShapes(b) {
     const st = LINE_STYLE[br.surface] || LINE_STYLE.road;
     out.push({ t: 'line', a: [cx, cy], b: at(br.rel, R * 0.8), w: st.w, dash: st.dash, color: '#888' });
   }
+  if (b.ra) out.push({ t: 'ring', c: [cx, cy], r: 10 });
   if (b.kind !== 'start') {
     const st = LINE_STYLE[b.inSurf] || LINE_STYLE.road;
     out.push({ t: 'line', a: [cx, cy + R], b: [cx, cy], w: st.w + 1.2, dash: st.dash, color: '#000' });
@@ -1239,6 +1240,7 @@ function tulipSVG(b, size = 100) {
     if (sh.t === 'dot') return `<circle cx="${f(sh.c[0])}" cy="${f(sh.c[1])}" r="${f(sh.r)}" fill="#000"/>`;
     if (sh.t === 'tri') return `<polygon points="${sh.p.map(p => f(p[0]) + ',' + f(p[1])).join(' ')}" fill="#000"/>`;
     if (sh.t === 'rect') return `<rect x="${f(sh.x)}" y="${f(sh.y)}" width="${f(sh.w)}" height="${f(sh.h)}" fill="#000"/>`;
+    if (sh.t === 'ring') return `<circle cx="${f(sh.c[0])}" cy="${f(sh.c[1])}" r="${f(sh.r)}" fill="#fff" stroke="#000" stroke-width="${f(2.5)}"/>`;
     if (sh.t === 'box') return `<rect x="${f(sh.x)}" y="${f(sh.y)}" width="${f(sh.w)}" height="${f(sh.h)}" fill="none" stroke="#000" stroke-width="${f(1)}"/>`;
     return '';
   });
@@ -1254,6 +1256,7 @@ function drawTulipPDF(doc, b, x, y, size) {
     } else if (sh.t === 'dot') { const c = P(sh.c); doc.setFillColor('#000'); doc.circle(c[0], c[1], sh.r * s, 'F'); }
     else if (sh.t === 'tri') { const [a, c, d] = sh.p.map(P); doc.setFillColor('#000'); doc.triangle(a[0], a[1], c[0], c[1], d[0], d[1], 'F'); }
     else if (sh.t === 'rect') { const a = P([sh.x, sh.y]); doc.setFillColor('#000'); doc.rect(a[0], a[1], sh.w * s, sh.h * s, 'F'); }
+    else if (sh.t === 'ring') { const c = P(sh.c); doc.setLineDashPattern([], 0); doc.setDrawColor('#000'); doc.setFillColor('#fff'); doc.setLineWidth(0.8); doc.circle(c[0], c[1], sh.r * s, 'FD'); }
     else if (sh.t === 'box') { const a = P([sh.x, sh.y]); doc.setLineDashPattern([], 0); doc.setLineWidth(0.3); doc.rect(a[0], a[1], sh.w * s, sh.h * s, 'S'); }
   }
   doc.setLineDashPattern([], 0);
@@ -1313,7 +1316,7 @@ function exportOpenRally(rb) {
     <name>${b.n}</name>
     <extensions>
       <openrally:distance>${(b.dist / 1000).toFixed(3)}</openrally:distance>
-${b.kind === 'start' ? '      <openrally:dss/>\n' : ''}${b.kind === 'finish' ? '      <openrally:ass/>\n' : ''}${b.cap != null ? `      <openrally:cap>${b.cap}</openrally:cap>\n` : ''}${b.danger ? `      <openrally:danger>${b.danger}</openrally:danger>\n` : ''}      <openrally:tulip><![CDATA[${tulipSVG(b).replace('<svg ', `<svg data-tb="${xmlEsc(JSON.stringify({ kind: b.kind, rel: b.rel, inB: b.inB ?? null, inSurf: b.inSurf, outSurf: b.outSurf, branches: b.branches }))}" `)}]]></openrally:tulip>
+${b.kind === 'start' ? '      <openrally:dss/>\n' : ''}${b.kind === 'finish' ? '      <openrally:ass/>\n' : ''}${b.cap != null ? `      <openrally:cap>${b.cap}</openrally:cap>\n` : ''}${b.danger ? `      <openrally:danger>${b.danger}</openrally:danger>\n` : ''}      <openrally:tulip><![CDATA[${tulipSVG(b).replace('<svg ', `<svg data-tb="${xmlEsc(JSON.stringify({ kind: b.kind, rel: b.rel, inB: b.inB ?? null, inSurf: b.inSurf, outSurf: b.outSurf, branches: b.branches, ...(b.ra ? { ra: true, raExit: b.raExit } : {}), ...(b.sym && b.sym.length ? { sym: b.sym } : {}) }))}" `)}]]></openrally:tulip>
       <openrally:notes><![CDATA[${notes}]]></openrally:notes>
     </extensions>
   </wpt>`;
@@ -1369,11 +1372,11 @@ function rbRender() {
   const rb = rbNormalize();
   document.getElementById('rbSum').textContent = `${rb.boxes.length} boxes · ${(rb.total / 1000).toFixed(2)} km`;
   const list = document.getElementById('rbList'); list.innerHTML = '';
-  if (!rb.boxes.length) list.innerHTML = '<div class="muted" style="padding:8px">No boxes yet. Plan a route and tap <b>From route</b>, or tap <b>Start spotting</b> and add a box at each junction as you ride.</div>';
+  if (!rb.boxes.length) list.innerHTML = '<div class="muted" style="padding:8px">No boxes yet. Plan a route and tap <b>From route</b>, open a GPX track and tap <b>From track</b>, or tap <b>Start spotting</b> and add a box at each junction as you ride.</div>';
   rb.boxes.forEach(b => {
     const d = document.createElement('div'); d.className = 'rbCard' + (RB.boxes.indexOf(b) === rbSel ? ' sel' : '');
     d.innerHTML = `<div class="rbT">${tulipSVG(b, 56)}</div><div class="rbD"><b>${(b.dist / 1000).toFixed(2)}</b><br><span class="muted">${(b.partial / 1000).toFixed(2)}</span></div>` +
-      `<div class="rbN"><span class="muted">#${b.n}</span> ${b.danger ? `<b style="color:#c00">${DANGER_TXT[b.danger]}</b> ` : ''}${esc(b.notes.join(' · ') || '')}${b.cap != null ? ` <span class="muted">CAP ${String(b.cap).padStart(3, '0')}</span>` : ''}${b.pending ? ' <i class="muted">(exit after 25 m…)</i>' : ''}</div>`;
+      `<div class="rbN"><span class="muted">#${b.n}</span> ${b.danger ? `<b style="color:#c00">${DANGER_TXT[b.danger]}</b> ` : ''}${b.sym && b.sym.length && typeof tbSymSVG === 'function' ? b.sym.map(id => tbSymSVG(id, 16)).join('') + ' ' : ''}${esc(b.notes.join(' · ') || '')}${b.cap != null ? ` <span class="muted">CAP ${String(b.cap).padStart(3, '0')}</span>` : ''}${b.pending ? ' <i class="muted">(exit after 25 m…)</i>' : ''}</div>`;
     d.onclick = () => rbEdit(RB.boxes.indexOf(b));
     list.appendChild(d);
   });
@@ -1568,7 +1571,7 @@ function rbImport(text) {
   RB = { name: r.name || 'Imported roadbook', boxes, track: r.track, odo: boxes.length ? Math.max(...boxes.map(b => b.dist)) : 0 };
   rbRender();
   const ll = boxes.map(b => [b.lat, b.lng]).concat(r.track); if (ll.length) map.fitBounds(L.latLngBounds(ll).pad(0.2));
-  if (!boxes.length) alert(`No roadbook boxes in this file, only a track (${r.track.length} points). Use ⬇ GPX to save it.`);
+  if (!boxes.length && r.track.length > 1 && confirm(`This GPX has no roadbook boxes, only a track (${r.track.length} points). Build the roadbook from the track now (junctions, roundabouts, off-piste, tulips)?\n\nYou can also do it later with From track.`)) rbFromTrack(r.track, r.name);
 }
 function rbExportGPX() { // the roadbook's track and boxes as a plain GPX (track + one waypoint per box)
   const rb = rbNormalize();
@@ -1589,6 +1592,11 @@ document.getElementById('rbFromRoute').onclick = () => {
   if (RB.boxes.length && !confirm('Replace the current roadbook with one built from the planned route?')) return;
   const built = buildRoadbook(lastLegs, profileMode()); if (!built) return;
   RB = { name: 'TrailBlazing roadbook', boxes: rbFromBuild(built), track: built.coords, odo: built.total }; rbRender();
+};
+document.getElementById('rbFromTrack').onclick = () => {
+  if (!RB.track || RB.track.length < 2) return alert('Open a GPX file with a track first (Open file…), then tap From track.');
+  if (RB.boxes.length && !confirm('Replace the current boxes with ones built from the track?')) return;
+  rbFromTrack(RB.track, RB.name);
 };
 document.getElementById('rbNew').onclick = () => { if (RB.boxes.length && !confirm('Start a new, empty roadbook? The current one will be cleared.')) return; RB = { name: 'TrailBlazing roadbook', boxes: [], track: [], odo: 0 }; spot.pending = null; rbRender(); };
 document.getElementById('rbOpenFile').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(rbImport).catch(err => alert('Could not open this file: ' + err.message)); e.target.value = ''; };
