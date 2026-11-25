@@ -14,7 +14,7 @@
 
 const RR_AP_STOP_WORDS = ['rond point', 'attention', 'arrivee', 'depart', 'station', 'police', 'aire', 'barriere', 'col', 'cp', 'td', 'tjs', 'ad', 'ag', 'groupe',
   'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche', 'danger', 'piste', 'route', 'autoroute', 'village', 'entree', 'sortie', 'fin', 'debut', 'drapeau', 'passage', 'pas', 'prudence', 'pont', 'tunnel', 'pano', 'panorama', 'marche', 'souk', 'travaux', 'vous', 'stop', 'cs', 'ks', 'kc', 'rlt', 'pp',
-  'arrival zone', 'zone', 'oued', 'plato', 'piste', 'dos d anes', 'ralentisseur', 'timing', 'cairns', 'potos'];
+  'arrival zone', 'zone', 'oued', 'plato', 'piste', 'dos d anes', 'ralentisseur', 'radar', 'afriquia', 'total', 'shell', 'ziz', 'winxo', 'oilibya', 'petrom', 'timing', 'cairns', 'potos'];
 function rrFoldName(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
     .replace(/[’'`]/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
@@ -43,6 +43,9 @@ function rrPlaceRefs(notes) {
   while ((m = notTaken.exec(t))) for (const n of (m[1] || m[2]).split(/\s*\/\s*/)) { const c = rrApCut(n.replace(/^\s*pas\s+/i, '')); if (RR_AP_NAMEOK(c)) avoid.push(c); }
   const u = t.replace(notTaken, ' ');
   if ((m = /p[ée]age\s+(?:de\s+|d['’]\s*)([^]*)/i.exec(u))) add('toll', m[1]);
+  // a place in brackets on its own is where the box is: "TD direction Marrakech (Amerzgane)", "station Ziz (Ait Zineb)"
+  const br = /\(\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,2})\s*\)/g;
+  while ((m = br.exec(u))) if (!/\bvers\b[^().,;]*$/i.test(u.slice(0, m.index))) add('town', m[1]); // not "AD vers bivouac de Rabat (Arbaa Shoul)"
   if ((m = /aire\s+(?:de\s+)?(?:repos|service|services)\s+(?:de\s+|d['’]\s*)?([^]*)/i.exec(u))) add('rest', m[1]);
   // a motorway exit: "(sortie Tiflet)", "sortie à péage Sidi El Yamani / Ouled Yaya", not "sortie direction Fès", not "en sortie d'El Hajeb"
   const ex = /(?:^|[^n]\s|\()sortie\s+(?!direction|dir\b|vers|d['’]|de\s|du\s|des\s|port|village|autoroute)(?:[àa]\s+p[ée]age\s+)?([^]*)/gi;
@@ -59,6 +62,7 @@ function rrPlaceRefs(notes) {
   if ((m = /^\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,3})\s*[.:]\s/.exec(u)) && m[1] !== m[1].toUpperCase()) add('town', m[1].replace(/^entr[ée]e\s+/i, ''));
   return { pins, avoid };
 }
+const RR_AP_WRAP = new Set(['peage', 'aire', 'de', 'du', 'des', 'la', 'le', 'les', 'el', 'service', 'services', 'repos', 'station', 'sortie', 'echangeur', 'gare', 'centre', 'ville', 'douar', 'ksar', 'kasba', 'kasbah', 'rest', 'area', 'toll', 'exit']);
 function rrLev(a, b) {
   if (a === b) return 0; if (!a.length) return b.length; if (!b.length) return a.length;
   let p = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -74,7 +78,8 @@ function rrNameSim(boxName, osmName) {
   if (strip(a) === strip(b)) return 0.95;
   const w = s => ` ${s} `;
   // OSM names wrap the place: "Péage de Meknes", "Aire de service M'Nasra", "Tiflet تيفلت"
-  if (w(b).includes(w(strip(a))) && strip(a).length >= 4) return 0.9;
+  // ...but "Imi-n-Taddert" is another village than Taddert: wrapped in other names, it is a weaker match
+  if (w(b).includes(w(strip(a))) && strip(a).length >= 4) return w(b).replace(w(strip(a)), ' ').trim().split(' ').every(x => !x || x.length < 2 || RR_AP_WRAP.has(x)) ? 0.9 : 0.8;
   if (w(a).includes(w(b)) && b.length >= 5) return 0.85;
   return 1 - rrLev(strip(a), strip(b)) / Math.max(strip(a).length, strip(b).length);
 }
@@ -145,9 +150,14 @@ async function rrOverpass(q, ms = 150000, text = false) {
   overpassBusy = pr.catch(() => {});
   return pr;
 }
-const rrApRegex = names => [...new Set(names.flatMap(n => rrFoldName(n).split(' ')).filter(w => w.length >= 4 && !RR_AP_STOP.has(w)))]
-  .map(w => w.replace(/[aeiou]/g, c => ({ a: '[aàáâä]', e: '[eéèêë]', i: '[iíìîï]', o: '[oóòôö]', u: '[uúùûü]' }[c])).replace(/([bcdfghjklmnpqrstvwxyz])/g, '$1+'))
-  .join('|');
+// a loose pattern for the names read in the roadbook (rrNameSim decides afterwards): spellings differ in
+// their vowels ("Aguim" = Agouim) and in doubled letters; a short name ("N'Kob") is kept whole.
+const RR_AP_V = '[aeiouyàáâäéèêëíìîïóòôöúùûü]';
+const rrApWordRe = w => w.replace(/[aeiouy]+/g, `${RR_AP_V}{1,3}`).replace(/([bcdfghjklmnpqrstvwxz])/g, '$1+');
+const rrApRegex = names => [...new Set(names.flatMap(n => {
+  const f = rrFoldName(n), long = f.split(' ').filter(w => w.length >= 4 && !RR_AP_STOP.has(w));
+  return long.length ? long.map(rrApWordRe) : f.length >= 4 && !RR_AP_STOP.has(f) ? [f.split(' ').map(rrApWordRe).join('.?')] : [];
+}))].join('|');
 // one row of the CSV answer: type lat lon name name:fr name:en highway barrier place
 function rrApRow(line) {
   const [, lat, lon, ...f] = line.split('\t'); const [name, fr, en, hw, barrier, place] = f;
@@ -381,7 +391,7 @@ function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   const av = rrAvoidNext(st.av, box, graph.nodes[v]);
   const gd = st.gdist + len, k = Math.max(RR_K_MIN, Math.min(RR_K_MAX, (gd + 3000) / (box.km * 1000 + 3000)));
   const leg = { to: v, len, rec: rrOffRec([from, graph.nodes[v]]), fromNode: st.v, off: true };
-  const edges = st.edges.concat(leg);
+  const edges = rrEdgesAdd(st.edges, [leg]);
   const hb = { i, v, ll: graph.nodes[v], dErr: len - P, skipped: false, off: true, offLen: len, offB: h, snapped: !!sn };
   const out = [];
   if (finish) { out.push({ v, out: null, score: st.score + base, k, lastKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...hb, cost: base }), edges }); return out; }

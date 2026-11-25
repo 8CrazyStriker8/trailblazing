@@ -977,7 +977,7 @@ function rrStartStates(box, mode) {
     for (const ex of rrExits(v, null, null, mode)) {
       const c = rrScoreExit({ rel: null, cap: box.cap, surf: box.surf, branches: [] }, ex, null);
       if (!isFinite(c)) continue;
-      st.push({ v, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: c + (vd / 40) ** 2, k: 1, lastKm: box.km || 0, gdist: 0, hist: [{ i: 0, v, ll: graph.nodes[v], cost: c, skipped: false }], edges: [] });
+      st.push({ v, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: c + (vd / 40) ** 2, k: 1, lastKm: box.km || 0, gdist: 0, hist: [{ i: 0, v, ll: graph.nodes[v], cost: c, skipped: false }], edges: null });
     }
   }
   return st;
@@ -1000,7 +1000,7 @@ async function rrMatch(onProgress) {
   }
   if (RR.src === 'osm') { onProgress('Loading OpenStreetMap data around the start…'); await RR_SRC.osm.load(startCells(RR_SRC.osm)); }
   const src = RR_SRC[RR.src];
-  if (RR.src === 'osm' && $rr('rrAuto').checked) await rrLoadCorridor(onProgress);
+  if (RR.src === 'osm' && $rr('rrAuto').checked && !(window.RR_OPTS || {}).noCorridor) await rrLoadCorridor(onProgress);
   let beam = rrStartStates(boxes[0], mode);
   // the next pinned box after each box: routes that can no longer reach it in the distance left are dropped
   const nextPin = []; for (let i = boxes.length - 1, nx = null; i >= 0; i--) { nextPin[i] = nx; if (boxes[i].lock && boxes[i].km != null) nx = i; }
@@ -1042,13 +1042,13 @@ async function rrMatch(onProgress) {
           const histBase = { i, v: w.cur, ll: graph.nodes[w.cur], dErr: w.acc - P, skipped: false };
           const gd = st.gdist + w.acc;
           const k = Math.max(RR_K_MIN, Math.min(RR_K_MAX, (gd + 3000) / (box.km * 1000 + 3000)));
-          const edges = w.same ? st.edges : st.edges.concat(w.edges);
+          const edges = w.same ? st.edges : rrEdgesAdd(st.edges, w.edges);
           if (finish) {
             const c = base;
             children.push({ v: w.cur, out: null, score: st.score + c, k, lastKm: box.km, anchorKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...histBase, cost: c }), edges });
             return;
           }
-          const back = w.same ? (st.edges.length ? st.edges[st.edges.length - 1].fromNode : null) : w.path[w.path.length - 2];
+          const back = w.same ? (st.edges ? rrEdgesLast(st.edges).fromNode : null) : w.path[w.path.length - 2];
           const inB = w.same ? (back != null ? bearing(graph.nodes[back], graph.nodes[w.cur]) : null) : bearing(graph.nodes[rrBack(w.path, RR_LOOK)], graph.nodes[w.cur]);
           const exits = rrExits(w.cur, back, inB, mode, uTurn);
           // at a roundabout box, the exits are the roads leaving the ring, reached by driving round it
@@ -1061,7 +1061,7 @@ async function rrMatch(onProgress) {
             const c = base + rrScoreExit(box, ex, arms ? null : neighbours(w.cur).size) + shape + (box.ra && !ex.ring ? 0.8 : 0) + (wide ? 0.5 : 0);
             if (!isFinite(c)) continue;
             if (!wide) bestShape = Math.min(bestShape, shape + rrScoreExit(box, ex, null));
-            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, anchorKm: (rrIsJunctionBox(box) && w.junction) || box.lock ? box.km : anchorKm, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, shape, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
+            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, anchorKm: (rrIsJunctionBox(box) && w.junction) || box.lock ? box.km : anchorKm, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, shape, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? rrEdgesAdd(edges, ex.ring) : edges });
           }
         };
         for (const w of ends) take(w, false);
@@ -1098,15 +1098,22 @@ async function rrMatch(onProgress) {
     const best = new Map();
     for (const c of children) { const key = `${c.v}>${c.out}`; const o = best.get(key); if (!o || c.score < o.score) best.set(key, c); }
     beam = [...best.values()].sort((a, b) => a.score - b.score).slice(0, RR_BEAM);
+    if ((window.RR_OPTS || {}).dbg) (window.__dbg = window.__dbg || {})[i + 1] = { n: best.size, beam: beam.slice(0, 40).map(s => [graph.nodes[s.v].map(x => +x.toFixed(4)), +s.score.toFixed(2)]) };
     if (!beam.length) throw new Error(`Lost the route at box ${i + 1}.`);
     await new Promise(r => setTimeout(r, 0));
   }
   return beam[0];
 }
 // the graph edge objects don't know their start node: rebuild them with from/to for drawRoute()
+// A state's route so far is a chain of edge chunks shared with its parent state (null: no edge yet), not a
+// copied array: a beam of a few thousand states over a 400 km stage would otherwise copy tens of
+// thousands of edges per state and box, and run out of memory where the map is dense (a city).
+function rrEdgesAdd(l, arr) { return arr && arr.length ? { a: arr, p: l } : l; }
+function rrEdgesLast(l) { return l ? l.a[l.a.length - 1] : null; }
+function rrEdgesAll(l) { const parts = []; for (let x = l; x; x = x.p) parts.push(x.a); return parts.reverse().flat(); }
 function rrLegs(st) {
   const out = []; let prev = st.hist[0].v;
-  for (const e of st.edges) { out.push({ from: prev, to: e.to, len: e.len, rec: e.rec }); prev = e.to; }
+  for (const e of rrEdgesAll(st.edges)) { out.push({ from: prev, to: e.to, len: e.len, rec: e.rec }); prev = e.to; }
   return out;
 }
 function rrFixEdges() { // make walk edges carry their origin node so a zero-length box can find the way it arrived

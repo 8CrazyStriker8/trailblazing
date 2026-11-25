@@ -13,7 +13,7 @@ const ask = body => new Promise((res, rej) => {
 });
 (async () => {
   const B = JSON.parse(fs.readFileSync(boxFile, 'utf8'));
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ args: ['--js-flags=--max-old-space-size=8192'] });
   const page = await browser.newPage();
   page.on('pageerror', e => console.error('page error:', e.message));
   await page.route('**/*', async route => {
@@ -22,10 +22,12 @@ const ask = body => new Promise((res, rej) => {
     if (/\/interpreter/.test(u)) { const a = await ask(route.request().postData() || ''); return route.fulfill({ status: a.status, contentType: a.type, body: a.body, headers: { 'Access-Control-Allow-Origin': '*' } }); }
     return route.abort(); // map tiles, IGN, anything else: not needed to rebuild
   });
+  await page.addInitScript(o => { window.RR_OPTS = o; }, JSON.parse(process.env.RR_OPTS || '{}')); // experiment switches
   await page.goto('file://' + path.resolve(__dirname, '../../index.html'));
   await page.waitForFunction(() => typeof rrMatch === 'function' && typeof RR === 'object');
   const t0 = Date.now();
-  const timer = setInterval(async () => { try { process.stderr.write(`\r${Math.round((Date.now() - t0) / 1000)} s ${(await page.evaluate(() => window.__prog || '')).slice(0, 90)}            `); } catch (e) {} }, 5000);
+  const cdp = await page.context().newCDPSession(page);
+  const timer = setInterval(async () => { try { const hu = await cdp.send('Runtime.getHeapUsage').catch(() => ({ usedSize: 0 })); process.stderr.write(`\r${Math.round((Date.now() - t0) / 1000)} s ${Math.round(hu.usedSize / 1e6)} MB ${(await page.evaluate(() => `${graph.nodes.length} nodes, ` + (window.__prog || ''))).slice(0, 120)}            `); } catch (e) {} }, 1000);
   const res = await page.evaluate(async ({ B, start, end }) => {
     const sel = document.getElementById('rrSrc'); if (sel) { sel.value = 'osm'; sel.dispatchEvent(new Event('change')); }
     const auto = document.getElementById('rrAuto'); if (auto) auto.checked = true;
@@ -46,6 +48,7 @@ const ask = body => new Promise((res, rej) => {
   clearInterval(timer);
   res.secs = (Date.now() - t0) / 1000;
   fs.writeFileSync(out, JSON.stringify(res));
+  const dbg = await page.evaluate(() => window.__dbg || null).catch(() => null); if (dbg) fs.writeFileSync(out + '.dbg.json', JSON.stringify(dbg));
   console.error(`\n${out}: ${(res.total / 1000).toFixed(1)} km, ${res.boxes.filter(b => b[2] === 'bad').length} boxes not found, ${res.pins.length} auto-pins, ${res.secs.toFixed(0)} s`);
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });
