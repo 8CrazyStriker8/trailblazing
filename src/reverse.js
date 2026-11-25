@@ -826,7 +826,7 @@ function rrOsmLoadKeys(keys, c) {
         try {
           const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 75000);
           if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
-          const j = await r.json();
+          const j = await overpassJSON(r);
           addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
           set('done'); return;
         } catch (err) { lastErr = err; }

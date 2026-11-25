@@ -135,7 +135,7 @@ async function rrOverpass(q, ms = 150000, text = false) {
         try {
           const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, ms);
           if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
-          return text ? await r.text() : await r.json();
+          return text ? await r.text() : await overpassJSON(r);
         } catch (err) { lastErr = err; }
       }
     }
