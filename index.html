@@ -4238,6 +4238,13 @@ function t2rJunctionBox(T, p, use) {
   Object.assign(box, { d: p.d, ll: graph.nodes[p.v], inRec: p.inArm.e.rec, outRec: p.outArm.e.rec });
   const rel = relAngle(p.outArm.b, p.ref), sv = Math.abs(rel);
   let others = p.others;
+  // taking a slip road off a main road (motorway exit): it leaves at a small angle, but it is the turn of the box
+  const isLinkRec = r => /_link$/.test(r.p.osm_highway || '') || norm(r.p.nature) === 'bretelle';
+  if (isLinkRec(p.outArm.e.rec) && !isLinkRec(p.inArm.e.rec) && others.length) {
+    const cont = others.reduce((a, b) => (Math.abs(relAngle(b.b, p.ref)) < Math.abs(relAngle(a.b, p.ref)) ? b : a));
+    const r2 = Math.abs(rel) >= 30 ? rel : (relAngle(cont.b, p.ref) > relAngle(p.outArm.b, p.ref) ? -30 : 30);
+    return Object.assign(box, { rel: r2, exitLink: true, branches: p.others.map(a => ({ rel: relAngle(a.b, p.ref), surface: surfaceOf(a.e.rec) })), ref: p.ref });
+  }
   // following the same road (straight on, or along its bend): a box only where the choice is not obvious
   const inR = p.inArm.e.rec, outR = p.outArm.e.rec, imp = Math.max(t2rImp(inR), t2rImp(outR)), onRoad = surfaceOf(outR) === 'road';
   const same = inR === outR || (roadName(inR) && roadName(inR) === roadName(outR)) || (t2rImp(inR) === t2rImp(outR) && surfaceOf(inR) === surfaceOf(outR));
@@ -4264,6 +4271,12 @@ function t2rOffRuns(T, idx) {
   // a few hundred metres on a mapped way between two off-piste parts (crossing or brushing a track) is not joining it
   const out = [];
   for (const r of runs) { const l = out[out.length - 1]; if (l && r.d0 - l.d1 < T2R.JOIN_MIN) l.d1 = r.d1; else out.push(r); }
+  // the box goes where the track actually leaves the way (it turns there), not where it is 40 m off it; same for joining
+  const on = d => idx.edgeDist(T.at(d), 20) <= 8;
+  for (const r of out) {
+    for (let k = 0; k < 30 && r.d0 > 5 && !on(r.d0 - 5); k++) r.d0 -= 5;
+    for (let k = 0; k < 40 && r.d1 < T.total - 5 && !on(r.d1); k++) r.d1 += 5;
+  }
   return out;
 }
 
@@ -4298,7 +4311,7 @@ function t2rFinish(T, raw) {
     else if (b.off === 'leave') { notes.push(`Off-piste, CAP ${String(cap).padStart(3, '0')}`); if (Math.abs(rel) >= 20) notes.push(turnWord(rel)); sym.push('offtrack'); }
     else if (b.off === 'join') { notes.push(`${turnWord(rel)}, join the ${outSurf}`); sym.push('offtrack_end'); }
     else if (b.off === 'cap') notes.push(`Keep CAP ${String(cap).padStart(3, '0')}`);
-    else notes.push(turnWord(rel));
+    else { notes.push(turnWord(rel)); if (b.exitLink) notes.push('take the exit'); }
     if (b.outRec && b.kind !== 'finish' && !b.off) {
       if (b.kind === 'start' || !b.inRec || surf(b.inRec) !== surf(b.outRec)) notes.push(`on ${outSurf}`);
       const nm = roadName(b.outRec); if (nm && (b.kind === 'start' || !b.inRec || roadName(b.inRec) !== nm)) notes.push(nm);
