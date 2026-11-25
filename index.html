@@ -3956,7 +3956,7 @@ function rrDest(ll, brg, d) {
   return [la2 / r, lo2 / r];
 }
 const rrGrid = { n: 0, m: new Map(), S: 0.004 };
-function rrSnap(ll, R, mode) { // nearest network node (with a usable way) within R metres
+function rrSnap(ll, R, mode, roadOnly = false) { // nearest network node (with a usable way; roadOnly: a road, not a track) within R metres
   for (; rrGrid.n < graph.nodes.length; rrGrid.n++) {
     const p = graph.nodes[rrGrid.n], k = Math.floor(p[0] / rrGrid.S) + '_' + Math.floor(p[1] / rrGrid.S);
     let a = rrGrid.m.get(k); if (!a) rrGrid.m.set(k, a = []); a.push(rrGrid.n);
@@ -3965,7 +3965,7 @@ function rrSnap(ll, R, mode) { // nearest network node (with a usable way) withi
   const i0 = Math.floor(ll[0] / rrGrid.S), j0 = Math.floor(ll[1] / rrGrid.S);
   let best = null;
   for (let i = i0 - dy; i <= i0 + dy; i++) for (let j = j0 - dx; j <= j0 + dx; j++) for (const v of rrGrid.m.get(i + '_' + j) || []) {
-    const d = hav(ll, graph.nodes[v]); if (d <= R && (!best || d < best.d) && rrNb(v, mode).size) best = { v, d };
+    const d = hav(ll, graph.nodes[v]); if (d <= R && (!best || d < best.d) && (roadOnly ? [...rrNb(v, mode).values()].some(e => surfaceOf(e.rec) === 'road') : rrNb(v, mode).size)) best = { v, d };
   }
   return best;
 }
@@ -4040,6 +4040,21 @@ function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   const edges = rrEdgesAdd(st.edges, [leg]);
   const hb = { i, v, ll: graph.nodes[v], dErr: len - P, skipped: false, off: true, offLen: len, offB: h, snapped: !!sn };
   const out = [];
+  // a box on a road reached by compass ("CAP~255, visez la route… AG sur route"): the road is there even if the
+  // heading or the distance drifted, so also try the nearest road within a wider radius
+  if (box.surf === 'road' && !finish && !box.lock) {
+    const sr = rrSnap(p1, Math.min(1500, 150 + 0.5 * P), mode, true);
+    if (sr && sr.v !== v) {
+      const lenR = hav(from, graph.nodes[sr.v]), cR = 1.4 + 0.8 + 0.5 * (sr.d / (100 + 0.2 * P)) ** 2 + rrAvoidCost(st.av, graph.nodes[sr.v], box.km);
+      const gdR = st.gdist + lenR, kR = Math.max(RR_K_MIN, Math.min(RR_K_MAX, (gdR + 3000) / (box.km * 1000 + 3000)));
+      const edgesR = rrEdgesAdd(st.edges, [{ to: sr.v, len: lenR, rec: rrOffRec([from, graph.nodes[sr.v]]), fromNode: st.v, off: true }]);
+      const hbR = { i, v: sr.v, ll: graph.nodes[sr.v], dErr: lenR - P, skipped: false, off: true, offLen: lenR, offB: h, snapped: true };
+      for (const ex of rrExits(sr.v, null, h, mode, uTurn)) {
+        const c = cR + rrScoreExit(box, ex, neighbours(sr.v).size);
+        if (isFinite(c)) out.push({ v: sr.v, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k: kR, lastKm: box.km, gdist: gdR, av: rrAvoidNext(st.av, box, graph.nodes[sr.v]), hist: st.hist.concat({ ...hbR, cost: c }), edges: edgesR });
+      }
+    }
+  }
   if (finish) { out.push({ v, out: null, score: st.score + base, k, lastKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...hb, cost: base }), edges }); return out; }
   // go on by compass from here
   out.push({ v, out: null, offB: nextB(h), score: st.score + base + 0.3, k, lastKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...hb, cost: base + 0.3 }), edges });
