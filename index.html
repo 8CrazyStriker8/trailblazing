@@ -3690,8 +3690,9 @@ function rrPlaceRefs(notes) {
   const u = t.replace(notTaken, ' ');
   if ((m = /p[ée]age\s+(?:de\s+|d['’]\s*)([^]*)/i.exec(u))) add('toll', m[1]);
   // a place in brackets on its own is where the box is: "TD direction Marrakech (Amerzgane)", "station Ziz (Ait Zineb)"
+  // ("(Errachidia TD)" is the road straight on, not taken, but a town is too wide to avoid: no use)
   const br = /\(\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,2})\s*\)/g;
-  while ((m = br.exec(u))) if (!/\bvers\b[^().,;]*$/i.test(u.slice(0, m.index))) add('town', m[1]); // not "AD vers bivouac de Rabat (Arbaa Shoul)"
+  while ((m = br.exec(u))) if (!/\bvers\b[^().,;]*$/i.test(u.slice(0, m.index)) && !/\b(TD|TJS|AD|AG)\b/.test(m[1])) add('town', m[1]); // not "AD vers bivouac de Rabat (Arbaa Shoul)"
   if ((m = /aire\s+(?:de\s+)?(?:repos|service|services)\s+(?:de\s+|d['’]\s*)?([^]*)/i.exec(u))) add('rest', m[1]);
   // a motorway exit: "(sortie Tiflet)", "sortie à péage Sidi El Yamani / Ouled Yaya", not "sortie direction Fès", not "en sortie d'El Hajeb"
   const ex = /(?:^|[^n]\s|\()sortie\s+(?!direction|dir\b|vers|d['’]|de\s|du\s|des\s|port|village|autoroute)(?:[àa]\s+p[ée]age\s+)?([^]*)/gi;
