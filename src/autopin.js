@@ -257,7 +257,7 @@ async function rrLoadCorridor(onProgress) {
   const ok = [];
   for (let k = 0; k < groups.length; k++) {
     onProgress(`Loading the main roads along the route (${k + 1} of ${groups.length})…`);
-    const parts = groups[k].segs.map(s => `way["highway"~"^(motorway|trunk|primary|secondary)(_link)?$"](${s.bb.map(v => v.toFixed(4)).join(',')});`).join('');
+    const parts = groups[k].segs.map(s => `way["highway"~"^(motorway|trunk|primary|secondary|tertiary)(_link)?$"](${s.bb.map(v => v.toFixed(4)).join(',')});`).join('');
     try {
       const j = await rrOverpass(`[out:json][timeout:90];(${parts});out tags geom;`, 100000);
       addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
