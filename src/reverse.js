@@ -848,7 +848,7 @@ function rrOsmLoadKeys(keys, c) {
 const RR_GPS_BLOCK = 0.1, RR_GPS_PAGES = 4, rrGpsState = new Map(), rrGpsWant = new Map();
 let rrGpsN = 0;
 function rrGpsNote(ll) { // a piste is near ll: ask for the traces of its 0.1° block
-  if (RR.gps === false || RR.src !== 'osm') return;
+  if ((RR.gps === false && !RR.mlUrl) || RR.src !== 'osm') return;
   const i = Math.floor(ll[0] / RR_GPS_BLOCK), j = Math.floor(ll[1] / RR_GPS_BLOCK), k = `${i}_${j}`;
   if (!rrGpsState.has(k)) rrGpsWant.set(k, [i * RR_GPS_BLOCK, j * RR_GPS_BLOCK, (i + 1) * RR_GPS_BLOCK, (j + 1) * RR_GPS_BLOCK]);
 }
@@ -871,8 +871,14 @@ function rrGpsLines(xml, before) { // GPX text -> [[lat, lng], ...] lines
 async function rrGpsLoad(list, mode) {
   for (const [k, bb] of list) {
     rrGpsState.set(k, 'loading'); rrGpsWant.delete(k);
-    const lines = [];
-    try {
+    const lines = [], ml = [];
+    // satellite-detected roads (Microsoft Road Detections, ODbL), cut in the same 0.1° blocks: added after the
+    // traces, so they only fill what nobody drove and uploaded. Lower confidence than a mapped track (rec.p.ml).
+    if (RR.mlUrl) try {
+      const [i, j] = k.split('_'), r = await fetchT(`${RR.mlUrl}/${i}_${j}.json`, {}, 60000);
+      if (r.ok) ml.push(...await r.json());
+    } catch (err) { console.warn(err); }
+    if (RR.gps !== false) try {
       for (let page = 0; page < RR_GPS_PAGES; page++) {
         const r = await fetchT(`https://api.openstreetmap.org/api/0.6/trackpoints?bbox=${bb[1].toFixed(4)},${bb[0].toFixed(4)},${bb[3].toFixed(4)},${bb[2].toFixed(4)}&page=${page}`, {}, 60000);
         if (!r.ok) throw new Error('OSM GPS HTTP ' + r.status);
@@ -884,7 +890,9 @@ async function rrGpsLoad(list, mode) {
     // keep only what is new: the stretches of a trace more than 30 m from any road, track or trace already
     // there (200 m or longer), joined to the network at both ends. Driven tracks are traced many times over,
     // and keeping every copy makes a mesh of tiny loops the matcher cannot walk through.
-    for (const line of lines) {
+    const mlSet = new Set(ml);
+    for (const line of (window.RR_OPTS || {}).mlFirst ? [...ml, ...lines] : [...lines, ...ml]) {
+      const isMl = mlSet.has(line);
       const near = line.map(p => rrSnap(p, 30, mode));
       let a = 0;
       while (a < line.length) {
@@ -895,10 +903,10 @@ async function rrGpsLoad(list, mode) {
         if (b + 1 < line.length) run.push(graph.nodes[near[b + 1].v]);
         let len = 0; for (let q = 1; q < run.length; q++) len += hav(run[q - 1], run[q]);
         if (len >= 200) {
-          const id = 'gps' + (++rrGpsN);
+          const id = (isMl ? 'ml' : 'gps') + (++rrGpsN);
           addFeatures([{ type: 'Feature', id, geometry: { type: 'LineString', coordinates: run.map(p => [p[1], p[0]]) },
             properties: { cleabs: id, source: 'osm', osm_id: '', nature: 'Chemin', importance: '6', etat_de_l_objet: 'En service', prive: 'false',
-              nom_collaboratif_gauche: 'public GPS trace', cpx_numero: '', osm_highway: 'track', osm_surface: '', osm_tracktype: '', osm_access: '', gps: 'true' } }]);
+              nom_collaboratif_gauche: isMl ? 'satellite-detected road' : 'public GPS trace', cpx_numero: '', osm_highway: 'track', osm_surface: '', osm_tracktype: '', osm_access: '', ...(isMl ? { ml: 'true' } : { gps: 'true' }) } }]);
           for (let q = a; q <= b; q++) near[q] = null; // later traces snap onto this one through the graph
         }
         a = b + 1;
@@ -1108,9 +1116,11 @@ async function rrMatch(onProgress) {
           const gpsLeg = !!(w.edges && w.edges.some(e => e.rec.p.gps));
           // on pistes with a heading, a track that wanders off it or loops back is worth less than the compass
           // (a public GPS trace more so: it may be a tourist's detour, not the rally's line)
-          if (capPrev != null && P > (gpsLeg ? 100 : 250) && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P) * (gpsLeg ? (window.RR_OPTS || {}).gpsHead ?? 3 : 1);
+          const mlLeg = !!(w.edges && w.edges.some(e => e.rec.p.ml));
+          if (capPrev != null && P > (gpsLeg ? 100 : 250) && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P) * (gpsLeg ? (window.RR_OPTS || {}).gpsHead ?? 3 : mlLeg ? (window.RR_OPTS || {}).mlHead ?? 1 : 1);
           if (!w.junction) base += (box.rel != null && Math.abs(box.rel) > 25 && !uTurn) ? Infinity : 1.2;
           if (gpsLeg) base += (window.RR_OPTS || {}).gpsCost ?? 0.8; // a public GPS trace: someone drove there, but maybe not the rally
+          if (mlLeg) base += (window.RR_OPTS || {}).mlCost ?? 0.5; // a road seen from space only: lower confidence
           if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[w.cur]); if (d > R) return; base += (d / Math.max(35, R / 3)) ** 2; } // lockR: pin radius (m), e.g. a whole interchange
           if (!isFinite(base)) return;
           base += rrAvoidCost(st.av, graph.nodes[w.cur], box.km); // heading for the branch the roadbook says not to take
