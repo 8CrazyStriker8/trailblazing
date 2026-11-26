@@ -32,6 +32,10 @@ function gpsTrace(u) {
     const u = route.request().url();
     if (u.startsWith('file:')) return route.continue();
     if (/\/interpreter/.test(u)) { const a = await ask(route.request().postData() || ''); return route.fulfill({ status: a.status, contentType: a.type, body: a.body, headers: { 'Access-Control-Allow-Origin': '*' } }); }
+    if (/^https:\/\/ml\.invalid\//.test(u)) { // satellite-detected road blocks cut by prep-ml.py, from ML_DIR
+      const f = path.join(process.env.ML_DIR || path.join(__dirname, 'ml-blocks'), path.basename(u.split('?')[0]));
+      return fs.existsSync(f) ? route.fulfill({ status: 200, contentType: 'application/json', body: fs.readFileSync(f), headers: { 'Access-Control-Allow-Origin': '*' } }) : route.fulfill({ status: 404, body: '', headers: { 'Access-Control-Allow-Origin': '*' } });
+    }
     if (/api\.openstreetmap\.org\/api\/0\.6\/trackpoints/.test(u)) return route.fulfill({ status: 200, contentType: 'application/gpx+xml', body: gpsTrace(u), headers: { 'Access-Control-Allow-Origin': '*' } });
     return route.abort(); // map tiles, IGN, anything else: not needed to rebuild
   });
@@ -45,7 +49,7 @@ function gpsTrace(u) {
     const sel = document.getElementById('rrSrc'); if (sel) { sel.value = 'osm'; sel.dispatchEvent(new Event('change')); }
     const auto = document.getElementById('rrAuto'); if (auto) auto.checked = true;
     OVERPASS.splice(0, OVERPASS.length, 'https://offline.invalid/api/interpreter');
-    const o = window.RR_OPTS || {}; if (o.tol) document.getElementById('rrTol').value = o.tol; RR.gps = o.gps !== 0; RR.gpsBefore = o.gpsBefore || '2026-01-01'; // 4L Trophy 2026 rebuilds: only traces recorded before the rally
+    const o = window.RR_OPTS || {}; if (o.tol) document.getElementById('rrTol').value = o.tol; RR.gps = o.gps !== 0; RR.gpsBefore = o.gpsBefore || '2026-01-01'; RR.mlUrl = o.ml ? 'https://ml.invalid' : null; // 4L Trophy 2026 rebuilds: only traces recorded before the rally; ml: satellite-detected roads (prep-ml.py blocks)
     const boxes = B.map((b, i) => rrCleanBox({ num: i + 1, km: b[0], rel: b[1], cap: b[2], surf: b[3], ra: b[4], branches: b[5], notes: b[6] }));
     boxes[boxes.length - 1].lock = end; boxes[boxes.length - 1].lockR = 150;
     RR.secs = [{ name: 'stage', boxes }]; RR.cur = 0; RR.result = null; RR.layer.clearLayers(); RR.cancel = false;
