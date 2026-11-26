@@ -2543,6 +2543,7 @@ rrPanel.innerHTML = `
       <label class="muted" title="How far your trip meter may differ from the roadbook">± <input type="text" id="rrTol" value="10" style="width:32px;flex:none"> % distance</label>
     </div>
     <div class="row"><label class="muted" title="Before rebuilding, look up on OpenStreetMap the exits, tolls, rest areas and towns named in the notes, and pin the boxes that name them (no AI). Your own pins are kept. Notes like '(Itzer à droite)' or 'pas Ifrane à gauche' steer the route away from that branch."><input type="checkbox" id="rrAuto" checked style="width:auto;flex:none"> Auto-pin the exits, tolls and towns named in the notes</label></div>
+    <div class="row"><label class="muted" title="With OpenStreetMap data in Morocco: also use the roads Microsoft detected on satellite images (Bing Maps Road Detections, ODbL) where OpenStreetMap has none. They count as less sure than a mapped track."><input type="checkbox" id="rrMl" checked style="width:auto;flex:none"> Add satellite-detected roads (Morocco)</label></div>
     <div class="row"><button id="rrRun" class="on" disabled>Rebuild route</button><button id="rrGpx" disabled>GPX</button><button id="rrPlan" disabled title="Open in the trip planner (roadbook PDF / OpenRally export)">To planner</button></div>
     <div id="rrStatus" class="muted"></div>
   </div>`;
@@ -3306,8 +3307,16 @@ function rrOsmLoadKeys(keys, c) {
 // within 20 m so it joins the network. RR.gpsBefore (ISO date) keeps only traces recorded before it.
 const RR_GPS_BLOCK = 0.1, RR_GPS_PAGES = 4, rrGpsState = new Map(), rrGpsWant = new Map();
 let rrGpsN = 0;
+// Satellite-detected roads: 0.1° blocks cut by tools/offline/prep-ml.py, kept in the repository (data/ml/MAR) and
+// served with the app. RR.mlUrl (if set, null = off) overrides the checkbox, for the offline runner.
+const RR_ML_RAW = 'https://raw.githubusercontent.com/8CrazyStriker8/trailblazing/main/data/ml/MAR';
+function rrMlUrl() {
+  if (RR.mlUrl !== undefined) return RR.mlUrl;
+  const c = document.getElementById('rrMl'); if (c && !c.checked) return null;
+  return /^https?:$/.test(location.protocol) ? new URL('data/ml/MAR', location.href).href.replace(/\/$/, '') : RR_ML_RAW;
+}
 function rrGpsNote(ll) { // a piste is near ll: ask for the traces of its 0.1° block
-  if ((RR.gps === false && !RR.mlUrl) || RR.src !== 'osm') return;
+  if ((RR.gps === false && !rrMlUrl()) || RR.src !== 'osm') return;
   const i = Math.floor(ll[0] / RR_GPS_BLOCK), j = Math.floor(ll[1] / RR_GPS_BLOCK), k = `${i}_${j}`;
   if (!rrGpsState.has(k)) rrGpsWant.set(k, [i * RR_GPS_BLOCK, j * RR_GPS_BLOCK, (i + 1) * RR_GPS_BLOCK, (j + 1) * RR_GPS_BLOCK]);
 }
@@ -3333,8 +3342,9 @@ async function rrGpsLoad(list, mode) {
     const lines = [], ml = [];
     // satellite-detected roads (Microsoft Road Detections, ODbL), cut in the same 0.1° blocks: added after the
     // traces, so they only fill what nobody drove and uploaded. Lower confidence than a mapped track (rec.p.ml).
-    if (RR.mlUrl) try {
-      const [i, j] = k.split('_'), r = await fetchT(`${RR.mlUrl}/${i}_${j}.json`, {}, 60000);
+    const mlUrl = rrMlUrl();
+    if (mlUrl) try {
+      const [i, j] = k.split('_'), r = await fetchT(`${mlUrl}/${i}_${j}.json`, {}, 60000);
       if (r.ok) ml.push(...await r.json());
     } catch (err) { console.warn(err); }
     if (RR.gps !== false) try {
