@@ -14,7 +14,7 @@
 
 const RR_AP_STOP_WORDS = ['rond point', 'attention', 'arrivee', 'depart', 'station', 'police', 'aire', 'barriere', 'col', 'cp', 'td', 'tjs', 'ad', 'ag', 'groupe',
   'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche', 'danger', 'piste', 'route', 'autoroute', 'village', 'entree', 'sortie', 'fin', 'debut', 'drapeau', 'passage', 'pas', 'prudence', 'pont', 'tunnel', 'pano', 'panorama', 'marche', 'souk', 'travaux', 'vous', 'stop', 'cs', 'ks', 'kc', 'rlt', 'pp',
-  'arrival zone', 'zone', 'oued', 'plato', 'piste', 'dos d anes', 'ralentisseur', 'timing', 'cairns', 'potos'];
+  'arrival zone', 'zone', 'oued', 'plato', 'piste', 'dos d anes', 'ralentisseur', 'radar', 'afriquia', 'total', 'shell', 'ziz', 'winxo', 'oilibya', 'petrom', 'timing', 'cairns', 'potos'];
 function rrFoldName(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
     .replace(/[’'`]/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
@@ -43,6 +43,10 @@ function rrPlaceRefs(notes) {
   while ((m = notTaken.exec(t))) for (const n of (m[1] || m[2]).split(/\s*\/\s*/)) { const c = rrApCut(n.replace(/^\s*pas\s+/i, '')); if (RR_AP_NAMEOK(c)) avoid.push(c); }
   const u = t.replace(notTaken, ' ');
   if ((m = /p[ée]age\s+(?:de\s+|d['’]\s*)([^]*)/i.exec(u))) add('toll', m[1]);
+  // a place in brackets on its own is where the box is: "TD direction Marrakech (Amerzgane)", "station Ziz (Ait Zineb)"
+  // ("(Errachidia TD)" is the road straight on, not taken, but a town is too wide to avoid: no use)
+  const br = /\(\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,2})\s*\)/g;
+  while ((m = br.exec(u))) if (!/\bvers\b[^().,;]*$/i.test(u.slice(0, m.index)) && !/\b(TD|TJS|AD|AG)\b/.test(m[1])) add('town', m[1]); // not "AD vers bivouac de Rabat (Arbaa Shoul)"
   if ((m = /aire\s+(?:de\s+)?(?:repos|service|services)\s+(?:de\s+|d['’]\s*)?([^]*)/i.exec(u))) add('rest', m[1]);
   // a motorway exit: "(sortie Tiflet)", "sortie à péage Sidi El Yamani / Ouled Yaya", not "sortie direction Fès", not "en sortie d'El Hajeb"
   const ex = /(?:^|[^n]\s|\()sortie\s+(?!direction|dir\b|vers|d['’]|de\s|du\s|des\s|port|village|autoroute)(?:[àa]\s+p[ée]age\s+)?([^]*)/gi;
@@ -56,9 +60,10 @@ function rrPlaceRefs(notes) {
   if ((m = /\bcentre(?:-ville)?\s+(?:de\s+|d['’]\s*)?([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
   if ((m = /\ben sortie d['’]\s*([^]*)/i.exec(u))) add('town', m[1]);
   if ((m = /\b[Dd]ans\s+([A-ZÀ-Ý][^]*)/.exec(u))) add('town', m[1]);
-  if ((m = /^\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,3})\s*[.:]\s/.exec(u)) && m[1] !== m[1].toUpperCase()) add('town', m[1].replace(/^entr[ée]e\s+/i, ''));
+  if ((m = /^\s*([A-ZÀ-Ý][\wÀ-ÿ'’-]*(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]*){0,3})\s*[.:]\s/.exec(u)) && m[1] !== m[1].toUpperCase() && !/^(TD|TJS|AD|AG|CS|CP)\b/.test(m[1])) add('town', m[1].replace(/^entr[ée]e\s+/i, '')); // not "AG Marrakech Médina." (a sign: the way to it)
   return { pins, avoid };
 }
+const RR_AP_WRAP = new Set(['peage', 'aire', 'de', 'du', 'des', 'la', 'le', 'les', 'el', 'service', 'services', 'repos', 'station', 'sortie', 'echangeur', 'gare', 'centre', 'ville', 'douar', 'ksar', 'kasba', 'kasbah', 'rest', 'area', 'toll', 'exit']);
 function rrLev(a, b) {
   if (a === b) return 0; if (!a.length) return b.length; if (!b.length) return a.length;
   let p = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -74,7 +79,8 @@ function rrNameSim(boxName, osmName) {
   if (strip(a) === strip(b)) return 0.95;
   const w = s => ` ${s} `;
   // OSM names wrap the place: "Péage de Meknes", "Aire de service M'Nasra", "Tiflet تيفلت"
-  if (w(b).includes(w(strip(a))) && strip(a).length >= 4) return 0.9;
+  // ...but "Imi-n-Taddert" is another village than Taddert: wrapped in other names, it is a weaker match
+  if (w(b).includes(w(strip(a))) && strip(a).length >= 4) return w(b).replace(w(strip(a)), ' ').trim().split(' ').every(x => !x || x.length < 2 || RR_AP_WRAP.has(x)) ? 0.9 : 0.8;
   if (w(a).includes(w(b)) && b.length >= 5) return 0.85;
   return 1 - rrLev(strip(a), strip(b)) / Math.max(strip(a).length, strip(b).length);
 }
@@ -135,7 +141,7 @@ async function rrOverpass(q, ms = 150000, text = false) {
         try {
           const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, ms);
           if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
-          return text ? await r.text() : await r.json();
+          return text ? await r.text() : await overpassJSON(r);
         } catch (err) { lastErr = err; }
       }
     }
@@ -145,9 +151,14 @@ async function rrOverpass(q, ms = 150000, text = false) {
   overpassBusy = pr.catch(() => {});
   return pr;
 }
-const rrApRegex = names => [...new Set(names.flatMap(n => rrFoldName(n).split(' ')).filter(w => w.length >= 4 && !RR_AP_STOP.has(w)))]
-  .map(w => w.replace(/[aeiou]/g, c => ({ a: '[aàáâä]', e: '[eéèêë]', i: '[iíìîï]', o: '[oóòôö]', u: '[uúùûü]' }[c])).replace(/([bcdfghjklmnpqrstvwxyz])/g, '$1+'))
-  .join('|');
+// a loose pattern for the names read in the roadbook (rrNameSim decides afterwards): spellings differ in
+// their vowels ("Aguim" = Agouim) and in doubled letters; a short name ("N'Kob") is kept whole.
+const RR_AP_V = '[aeiouyàáâäéèêëíìîïóòôöúùûü]';
+const rrApWordRe = w => w.replace(/[aeiouy]+/g, `${RR_AP_V}{1,3}`).replace(/([bcdfghjklmnpqrstvwxz])/g, '$1+');
+const rrApRegex = names => [...new Set(names.flatMap(n => {
+  const f = rrFoldName(n), long = f.split(' ').filter(w => w.length >= 4 && !RR_AP_STOP.has(w));
+  return long.length ? long.map(rrApWordRe) : f.length >= 4 && !RR_AP_STOP.has(f) ? [f.split(' ').map(rrApWordRe).join('.?')] : [];
+}))].join('|');
 // one row of the CSV answer: type lat lon name name:fr name:en highway barrier place
 function rrApRow(line) {
   const [, lat, lon, ...f] = line.split('\t'); const [name, fr, en, hw, barrier, place] = f;
@@ -257,7 +268,7 @@ async function rrLoadCorridor(onProgress) {
   const ok = [];
   for (let k = 0; k < groups.length; k++) {
     onProgress(`Loading the main roads along the route (${k + 1} of ${groups.length})…`);
-    const parts = groups[k].segs.map(s => `way["highway"~"^(motorway|trunk|primary|secondary)(_link)?$"](${s.bb.map(v => v.toFixed(4)).join(',')});`).join('');
+    const parts = groups[k].segs.map(s => `way["highway"~"^(motorway|trunk|primary|secondary|tertiary)(_link)?$"](${s.bb.map(v => v.toFixed(4)).join(',')});`).join('');
     try {
       const j = await rrOverpass(`[out:json][timeout:90];(${parts});out tags geom;`, 100000);
       addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
@@ -273,7 +284,7 @@ async function rrLoadCorridor(onProgress) {
       const key = `${i}_${k}`; if (rrOsmState.get(key)) continue;
       const c = [(i + 0.5) * S, (k + 0.5) * S];
       if (keep.some(p => hav(p, c) < 3500)) continue;
-      rrOsmState.set(key, 'done'); n++;
+      rrOsmState.set(key, 'main'); n++; // main roads only: loaded in full when a compass leg or a track needs it
     }
   }
   return n;
@@ -300,7 +311,7 @@ function rrDest(ll, brg, d) {
   return [la2 / r, lo2 / r];
 }
 const rrGrid = { n: 0, m: new Map(), S: 0.004 };
-function rrSnap(ll, R, mode) { // nearest network node (with a usable way) within R metres
+function rrSnap(ll, R, mode, roadOnly = false) { // nearest network node (with a usable way; roadOnly: a road, not a track) within R metres
   for (; rrGrid.n < graph.nodes.length; rrGrid.n++) {
     const p = graph.nodes[rrGrid.n], k = Math.floor(p[0] / rrGrid.S) + '_' + Math.floor(p[1] / rrGrid.S);
     let a = rrGrid.m.get(k); if (!a) rrGrid.m.set(k, a = []); a.push(rrGrid.n);
@@ -309,7 +320,7 @@ function rrSnap(ll, R, mode) { // nearest network node (with a usable way) withi
   const i0 = Math.floor(ll[0] / rrGrid.S), j0 = Math.floor(ll[1] / rrGrid.S);
   let best = null;
   for (let i = i0 - dy; i <= i0 + dy; i++) for (let j = j0 - dx; j <= j0 + dx; j++) for (const v of rrGrid.m.get(i + '_' + j) || []) {
-    const d = hav(ll, graph.nodes[v]); if (d <= R && (!best || d < best.d) && rrNb(v, mode).size) best = { v, d };
+    const d = hav(ll, graph.nodes[v]); if (d <= R && (!best || d < best.d) && (roadOnly ? [...rrNb(v, mode).values()].some(e => surfaceOf(e.rec) === 'road') : rrNb(v, mode).size)) best = { v, d };
   }
   return best;
 }
@@ -319,11 +330,44 @@ const rrOffWanted = (st, box, prev) => st.out == null || st.offB != null || /^(t
   /hors[- ]?piste|\bcap\s*[~≈]|\bc\s*[~≈]\s*\d/i.test(((prev && prev.notes) || '') + ' ' + (box.notes || ''));
 // cost of a network leg from a to b when the roadbook gives the heading cap for it: off the heading, or
 // far shorter in a straight line than on the ground (a loop), it is likely the wrong track
+// Calibrated on the 4L Trophy 2026 official tracks (Étapes 1–3, 66 piste legs of 500 m or more): the
+// straight line between two boxes is within 2° of the roadbook CAP half the time, 9° nine times in ten,
+// and pistes are nearly straight (chord / length 0.995 median). So a leg more than ~12° off the CAP,
+// or one that winds, is suspect.
 function rrHeadingCost(a, b, cap, P) {
   const d = hav(a, b); let c = 0;
-  if (d > 50) c += Math.min(4, (Math.max(0, Math.abs(relAngle(bearing(a, b), cap)) - 20) / 35) ** 2);
-  const sr = d / P; if (sr < 0.6) c += Math.min(3, ((0.6 - sr) / 0.3) ** 2);
+  if (d > 50) c += Math.min(4, (Math.max(0, Math.abs(relAngle(bearing(a, b), cap)) - 12) / 22) ** 2);
+  const sr = d / P; if (sr < 0.75) c += Math.min(3, ((0.75 - sr) / 0.25) ** 2);
   return c;
+}
+// Traverse closure (the compass-traverse adjustment surveyors use, Bowditch rule): a chain of compass legs
+// drifts, a few degrees and a few percent per leg. When a pinned box lies ahead, dead-reckon the remaining
+// legs from here to it, compare with where the pin really is, and give this leg its share of the gap,
+// in proportion to its length. Each leg re-measures from where the route really is, so legs matched on
+// mapped tracks are taken into account, and the last leg ends on the pin. Only across pistes: a chain
+// with more than 2.5 km of road before the pin is not closed, as a road bends where the road bends.
+function rrClose(from, h, P, st, box, i, o, turn) {
+  const B = o.boxes; if (!B) return null;
+  const np = box.lock ? i : o.np; if (np == null) return null;
+  const pin = B[np].lock, k = st.k || 1;
+  let c = h, sx = 0, sy = 0, D = 0, road = 0;
+  for (let j = i; j <= np; j++) {
+    const bj = B[j];
+    const L = j === i ? P : Math.max(0, (bj.km - B[j - 1].km) * 1000 * k);
+    if (j > i && B[j - 1].surf === 'road' && (road += L) > 2500) return null; // a long road stretch on the way bends where the road bends
+    const hj = c, r = hj * Math.PI / 180;
+    sx += L * Math.sin(r); sy += L * Math.cos(r); D += L;
+    const cap = rrCapOf(bj);
+    c = cap != null ? cap : (bj.rel != null && !bj.ra ? (hj + bj.rel + 360) % 360 : hj);
+  }
+  if (D < 200 || D > 60000) return null;
+  const kx = Math.cos(from[0] * Math.PI / 180);
+  const tx = (pin[1] - from[1]) * 111320 * kx, ty = (pin[0] - from[0]) * 111320;
+  const ex = tx - sx, ey = ty - sy, gap = Math.hypot(ex, ey);
+  if (gap > 0.35 * D + 500) return null; // too far off to be drift: the pin or the distances are wrong
+  const r = h * Math.PI / 180, f = P / D;
+  const vx = P * Math.sin(r) + ex * f, vy = P * Math.cos(r) + ey * f;
+  return [from[0] + vy / 111320, from[1] + vx / (111320 * kx)];
 }
 function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   if (!rrOffWanted(st, box, prev)) return [];
@@ -337,8 +381,8 @@ function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   }
   const h = st.offB != null ? st.offB : rrCapOf(prev);
   if (h == null || P < 30) return [];
-  const from = graph.nodes[st.v], p1 = rrDest(from, h, P);
-  rrCellsAround(p1, missing, RR_SRC[RR.src], 0.006); // load the map there, a track may be mapped
+  const from = graph.nodes[st.v], p1 = rrClose(from, h, P, st, box, i, o, turn) || rrDest(from, h, P);
+  rrCellsAround(p1, missing, RR_SRC[RR.src], 0.006, true); // load the map there in full, a track or small road may be mapped
   const sn = rrSnap(p1, 60 + 0.1 * P, mode);
   const v = sn ? sn.v : graph.node(p1);
   const len = hav(from, graph.nodes[v]);
@@ -346,11 +390,26 @@ function rrOffPisteKids(st, box, prev, P, mode, finish, uTurn, missing, o) {
   if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[v]); if (d > R) return []; base += (d / Math.max(35, R / 3)) ** 2; }
   base += rrAvoidCost(st.av, graph.nodes[v], box.km);
   const av = rrAvoidNext(st.av, box, graph.nodes[v]);
-  const gd = st.gdist + len, k = Math.max(0.85, Math.min(1.15, (gd + 3000) / (box.km * 1000 + 3000)));
+  const gd = st.gdist + len, k = Math.max(RR_K_MIN, Math.min(RR_K_MAX, (gd + 3000) / (box.km * 1000 + 3000)));
   const leg = { to: v, len, rec: rrOffRec([from, graph.nodes[v]]), fromNode: st.v, off: true };
-  const edges = st.edges.concat(leg);
+  const edges = rrEdgesAdd(st.edges, [leg]);
   const hb = { i, v, ll: graph.nodes[v], dErr: len - P, skipped: false, off: true, offLen: len, offB: h, snapped: !!sn };
   const out = [];
+  // a box on a road reached by compass ("CAP~255, visez la route… AG sur route"): the road is there even if the
+  // heading or the distance drifted, so also try the nearest road within a wider radius
+  if (box.surf === 'road' && !finish && !box.lock) {
+    const sr = rrSnap(p1, Math.min(1500, 150 + 0.5 * P), mode, true);
+    if (sr && sr.v !== v) {
+      const lenR = hav(from, graph.nodes[sr.v]), cR = 1.4 + 0.8 + 0.5 * (sr.d / (100 + 0.2 * P)) ** 2 + rrAvoidCost(st.av, graph.nodes[sr.v], box.km);
+      const gdR = st.gdist + lenR, kR = Math.max(RR_K_MIN, Math.min(RR_K_MAX, (gdR + 3000) / (box.km * 1000 + 3000)));
+      const edgesR = rrEdgesAdd(st.edges, [{ to: sr.v, len: lenR, rec: rrOffRec([from, graph.nodes[sr.v]]), fromNode: st.v, off: true }]);
+      const hbR = { i, v: sr.v, ll: graph.nodes[sr.v], dErr: lenR - P, skipped: false, off: true, offLen: lenR, offB: h, snapped: true };
+      for (const ex of rrExits(sr.v, null, h, mode, uTurn)) {
+        const c = cR + rrScoreExit(box, ex, neighbours(sr.v).size);
+        if (isFinite(c)) out.push({ v: sr.v, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k: kR, lastKm: box.km, gdist: gdR, av: rrAvoidNext(st.av, box, graph.nodes[sr.v]), hist: st.hist.concat({ ...hbR, cost: c }), edges: edgesR });
+      }
+    }
+  }
   if (finish) { out.push({ v, out: null, score: st.score + base, k, lastKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...hb, cost: base }), edges }); return out; }
   // go on by compass from here
   out.push({ v, out: null, offB: nextB(h), score: st.score + base + 0.3, k, lastKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...hb, cost: base + 0.3 }), edges });

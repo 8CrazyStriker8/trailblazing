@@ -768,18 +768,20 @@ function rrBack(path, d) { // node about d metres back along a walk (array of no
 }
 // Data sources: IGN BD TOPO cells (the app's own loader) or OpenStreetMap ways from Overpass,
 // converted to BD TOPO-like features so the map, the planner and the roadbook export work on them too.
-const RR_OSM_CELL = 0.02, rrOsmState = new Map(), rrOsmFails = new Map(); // key -> 'loading' | 'done' | 'error'; key -> failed loads
+const RR_OSM_CELL = 0.02, rrOsmState = new Map(), rrOsmFails = new Map(); // key -> 'loading' | 'done' | 'main' (main roads only) | 'error'; key -> failed loads
 const RR_SRC = {
   ign: { name: 'IGN', size: () => CELL, state: k => cells.get(k), load: list => requestCells(list), batch: 48 },
   // a cell the busy server refused is asked again later (up to 3 times): a missing town centre loses the route
   osm: { name: 'OpenStreetMap', size: () => RR_OSM_CELL, state: k => { const s = rrOsmState.get(k); return s === 'error' && (rrOsmFails.get(k) || 0) < 3 ? undefined : s; }, load: list => rrOsmLoadMany(list), batch: 12 },
 };
-function rrCellsAround(ll, missing, src, r = 0.004) { // note unloaded data cells within ~r degrees of a point
+function rrCellsAround(ll, missing, src, r = 0.004, full = false) { // note unloaded data cells within ~r degrees of a point
   const S = src.size();
   for (const dy of [-r, 0, r]) for (const dx of [-r * 1.5, 0, r * 1.5]) {
-    const i = Math.floor((ll[0] + dy) / S), j = Math.floor((ll[1] + dx) / S), k = `${i}_${j}`;
-    if (src.state(k) == null) missing.set(k, [i * S, j * S, (i + 1) * S, (j + 1) * S]);
+    const i = Math.floor((ll[0] + dy) / S), j = Math.floor((ll[1] + dx) / S), k = `${i}_${j}`, st = src.state(k);
+    // full: cells that hold only the main roads (loaded along a long road stretch) count as missing too
+    if (st == null || (full && st === 'main')) missing.set(k, [i * S, j * S, (i + 1) * S, (j + 1) * S]);
   }
+  if (full && src === RR_SRC.osm) rrGpsNote(ll);
 }
 const OSM_HW = { // highway=* -> [BD TOPO nature, importance]
   motorway: ['Type autoroutier', 1], motorway_link: ['Bretelle', 1], trunk: ['Route à 2 chaussées', 1], trunk_link: ['Bretelle', 1],
@@ -826,7 +828,7 @@ function rrOsmLoadKeys(keys, c) {
         try {
           const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 75000);
           if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
-          const j = await r.json();
+          const j = await overpassJSON(r);
           addFeatures((j.elements || []).map(rrOsmFeature).filter(Boolean));
           set('done'); return;
         } catch (err) { lastErr = err; }
@@ -837,6 +839,73 @@ function rrOsmLoadKeys(keys, c) {
   const pr = overpassBusy.then(run, run); // one Overpass request at a time, shared with the access check (fair use)
   overpassBusy = pr.catch(() => {});
   return pr.catch(() => {});
+}
+// ---------- Public GPS traces (OpenStreetMap) ----------
+// Desert pistes are often missing from the map but people have driven them: the public GPS traces uploaded
+// to OpenStreetMap become extra tracks where the route is on piste. Each trace is thinned to a point every
+// ~20 m, cut where it jumps (signal lost), and its points are snapped to roads, tracks or other traces
+// within 20 m so it joins the network. RR.gpsBefore (ISO date) keeps only traces recorded before it.
+const RR_GPS_BLOCK = 0.1, RR_GPS_PAGES = 4, rrGpsState = new Map(), rrGpsWant = new Map();
+let rrGpsN = 0;
+function rrGpsNote(ll) { // a piste is near ll: ask for the traces of its 0.1° block
+  if (RR.gps === false || RR.src !== 'osm') return;
+  const i = Math.floor(ll[0] / RR_GPS_BLOCK), j = Math.floor(ll[1] / RR_GPS_BLOCK), k = `${i}_${j}`;
+  if (!rrGpsState.has(k)) rrGpsWant.set(k, [i * RR_GPS_BLOCK, j * RR_GPS_BLOCK, (i + 1) * RR_GPS_BLOCK, (j + 1) * RR_GPS_BLOCK]);
+}
+function rrGpsLines(xml, before) { // GPX text -> [[lat, lng], ...] lines
+  const out = [], doc = new DOMParser().parseFromString(xml, 'application/xml');
+  for (const seg of doc.getElementsByTagName('trkseg')) {
+    let line = [], last = null, lastT = null;
+    for (const p of seg.getElementsByTagName('trkpt')) {
+      const ll = [+p.getAttribute('lat'), +p.getAttribute('lon')], tEl = p.getElementsByTagName('time')[0], t = tEl ? tEl.textContent : null;
+      if (!t || (before && t >= before)) { if (line.length > 1) out.push(line); line = []; last = null; continue; } // no time: points sorted by place, not a line
+      const tt = Date.parse(t);
+      if (last && (hav(last, ll) > 250 || Math.abs(tt - lastT) > 180000)) { if (line.length > 1) out.push(line); line = []; last = null; }
+      if (!last || hav(line[line.length - 1], ll) >= 20) line.push(ll);
+      last = ll; lastT = tt;
+    }
+    if (line.length > 1) out.push(line);
+  }
+  return out;
+}
+async function rrGpsLoad(list, mode) {
+  for (const [k, bb] of list) {
+    rrGpsState.set(k, 'loading'); rrGpsWant.delete(k);
+    const lines = [];
+    try {
+      for (let page = 0; page < RR_GPS_PAGES; page++) {
+        const r = await fetchT(`https://api.openstreetmap.org/api/0.6/trackpoints?bbox=${bb[1].toFixed(4)},${bb[0].toFixed(4)},${bb[3].toFixed(4)},${bb[2].toFixed(4)}&page=${page}`, {}, 60000);
+        if (!r.ok) throw new Error('OSM GPS HTTP ' + r.status);
+        const xml = await r.text();
+        lines.push(...rrGpsLines(xml, RR.gpsBefore));
+        if ((xml.match(/<trkpt/g) || []).length < 5000) break; // last page
+      }
+    } catch (err) { console.warn(err); }
+    // keep only what is new: the stretches of a trace more than 30 m from any road, track or trace already
+    // there (200 m or longer), joined to the network at both ends. Driven tracks are traced many times over,
+    // and keeping every copy makes a mesh of tiny loops the matcher cannot walk through.
+    for (const line of lines) {
+      const near = line.map(p => rrSnap(p, 30, mode));
+      let a = 0;
+      while (a < line.length) {
+        if (near[a]) { a++; continue; }
+        let b = a; while (b + 1 < line.length && !near[b + 1]) b++;
+        const run = line.slice(a, b + 1);
+        if (a > 0) run.unshift(graph.nodes[near[a - 1].v]);
+        if (b + 1 < line.length) run.push(graph.nodes[near[b + 1].v]);
+        let len = 0; for (let q = 1; q < run.length; q++) len += hav(run[q - 1], run[q]);
+        if (len >= 200) {
+          const id = 'gps' + (++rrGpsN);
+          addFeatures([{ type: 'Feature', id, geometry: { type: 'LineString', coordinates: run.map(p => [p[1], p[0]]) },
+            properties: { cleabs: id, source: 'osm', osm_id: '', nature: 'Chemin', importance: '6', etat_de_l_objet: 'En service', prive: 'false',
+              nom_collaboratif_gauche: 'public GPS trace', cpx_numero: '', osm_highway: 'track', osm_surface: '', osm_tracktype: '', osm_access: '', gps: 'true' } }]);
+          for (let q = a; q <= b; q++) near[q] = null; // later traces snap onto this one through the graph
+        }
+        a = b + 1;
+      }
+    }
+    rrGpsState.set(k, 'done');
+  }
 }
 function rrHasData(src, ll, radius) { // any usable section of this source within radius metres?
   for (let i = 0; i < graph.nodes.length; i++) {
@@ -903,7 +972,7 @@ function rrShapeCost(box, arms, exN) {
     for (let j = 0; j < others.length; j++) {
       if (used[j]) continue;
       const d = Math.abs(relAngle(others[j].rel, drawn[k])); if (d > 60) continue;
-      used[j] = true; go(k + 1, acc + (d / 30) ** 2); used[j] = false;
+      used[j] = true; go(k + 1, acc + (d / ((window.RR_OPTS || {}).arm ?? 30)) ** 2); used[j] = false;
     }
   })(0, 0);
   return Math.min(5, best);
@@ -914,20 +983,20 @@ function rrScoreExit(box, ex, nbCount) { // cost of leaving box's junction by ex
     const keys = String(ex.e.rec.p.cpx_numero || '').split(/[;,/]/).map(rrRoadKey).filter(Boolean);
     c += keys.includes(rrRoadKey(box.road)) ? -0.5 : keys.length ? 1.2 : 0.4;
   }
-  if (box.rel != null && ex.rel != null) { const d = Math.abs(relAngle(ex.rel, box.rel)); if (d > 75) return Infinity; c += (d / 35) ** 2; }
+  if (box.rel != null && ex.rel != null) { const d = Math.abs(relAngle(ex.rel, box.rel)); if (d > 75) return Infinity; c += (d / ((window.RR_OPTS || {}).ang ?? 25)) ** 2; } // 25°: swept 25–50° on the six 4L 2026 étapes
   if (box.cap != null) { const d = Math.abs(relAngle(ex.outB, box.cap)); if (d > 80) return Infinity; c += (d / 30) ** 2 * 0.8; }
   if (box.surf && surfaceOf(ex.e.rec) !== box.surf && !(box.surf === 'path' && surfaceOf(ex.e.rec) === 'track')) c += 0.6;
   if (box.branches && box.branches.length && nbCount != null) c += 0.25 * Math.min(4, Math.abs(nbCount - 2 - box.branches.length));
   return c;
 }
 // all walks from state st covering [lo, hi] metres; returns candidate end points and missing data cells
-function rrWalks(st, lo, hi, mode, finish, missing, anyNode) {
+function rrWalks(st, lo, hi, mode, finish, missing, anyNode, full = false) {
   const ends = [], seen = new Map(); const stack = [{ prev: st.v, cur: st.out, acc: st.firstLen, pen: 0, path: [st.v, st.out], edges: [st.outEdge] }];
   let guard = 0;
   while (stack.length && ends.length < RR_MAXCAND && guard++ < 60000) {
     const w = stack.pop();
     const here = graph.nodes[w.cur];
-    rrCellsAround(here, missing, RR_SRC[RR.src]);
+    rrCellsAround(here, missing, RR_SRC[RR.src], 0.004, full);
     const nb = rrNb(w.cur, mode); nb.delete(w.prev);
     const isJ = neighbours(w.cur).size >= 3; // a junction on the ground, even if the side branch is a footpath
     if (w.acc >= lo && w.acc <= hi && (isJ || anyNode || nb.size === 0)) {
@@ -976,11 +1045,15 @@ function rrStartStates(box, mode) {
     for (const ex of rrExits(v, null, null, mode)) {
       const c = rrScoreExit({ rel: null, cap: box.cap, surf: box.surf, branches: [] }, ex, null);
       if (!isFinite(c)) continue;
-      st.push({ v, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: c + (vd / 40) ** 2, k: 1, lastKm: box.km || 0, gdist: 0, hist: [{ i: 0, v, ll: graph.nodes[v], cost: c, skipped: false }], edges: [] });
+      st.push({ v, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: c + (vd / 40) ** 2, k: 1, lastKm: box.km || 0, gdist: 0, hist: [{ i: 0, v, ll: graph.nodes[v], cost: c, skipped: false }], edges: null });
     }
   }
   return st;
 }
+// Trip-meter factor bounds. Measured on the 4L Trophy 2026 official tracks (Étapes 1–3, 226 legs):
+// roadbook distances match the ground within 1–2 % on roads and ~4 % on pistes, so a route whose
+// distances drift by more than 6 % overall is a wrong route, not a miscalibrated trip meter.
+const RR_K_MIN = 0.94, RR_K_MAX = 1.06;
 async function rrMatch(onProgress) {
   const mode = $rr('rrMode').value, tol = Math.max(0.02, Math.min(0.4, (rrNum($rr('rrTol').value) || 10) / 100));
   const boxes = RR.boxes;
@@ -995,7 +1068,7 @@ async function rrMatch(onProgress) {
   }
   if (RR.src === 'osm') { onProgress('Loading OpenStreetMap data around the start…'); await RR_SRC.osm.load(startCells(RR_SRC.osm)); }
   const src = RR_SRC[RR.src];
-  if (RR.src === 'osm' && $rr('rrAuto').checked) await rrLoadCorridor(onProgress);
+  if (RR.src === 'osm' && $rr('rrAuto').checked && !(window.RR_OPTS || {}).noCorridor) await rrLoadCorridor(onProgress);
   let beam = rrStartStates(boxes[0], mode);
   // the next pinned box after each box: routes that can no longer reach it in the distance left are dropped
   const nextPin = []; for (let i = boxes.length - 1, nx = null; i >= 0; i--) { nextPin[i] = nx; if (boxes[i].lock && boxes[i].km != null) nx = i; }
@@ -1008,11 +1081,14 @@ async function rrMatch(onProgress) {
     for (let round = 0; round < (RR.src === 'osm' ? 10 : 5); round++) {
       const missing = new Map(); children = [];
       const capPrev = /^(track|path)$/.test(box.surf || '') || /^(track|path)$/.test(boxes[i - 1].surf || '') ? rrCapOf(boxes[i - 1]) : null;
+      const full = /^(track|path)$/.test(box.surf || '') || /^(track|path)$/.test(boxes[i - 1].surf || ''); // pistes: the main-roads-only areas are not enough
       for (const st of beam) {
         const P = (box.km - st.lastKm) * 1000 * st.k;
         if (P < -5) continue;
         // a pinned box is where it is: its distance may be off (trip meter, misread), so look much wider
-        const ptol = box.lock ? Math.max(tol, 0.3) : tol, pad = box.lock ? 500 : 30;
+        const ptol = box.lock ? Math.max(tol, 0.3) : tol;
+        // the finish is where it is: whatever the trip meter drifted by over the stage (up to ~2 %), the route must get there
+        const pad = finish && box.lock && !(window.RR_OPTS || {}).noFinPad ? Math.min(5000, Math.max(500, box.km * 20)) : box.lock ? 500 : 30;
         // the distance is reset at each junction box; boxes in between (a fuel station, a village sign) are not
         // firm, so the uncertainty grows with the distance since the last junction box, as it does for a rider
         const anchorKm = st.anchorKm ?? st.lastKm, span = Math.max(P, (box.km - anchorKm) * 1000 * st.k);
@@ -1021,28 +1097,35 @@ async function rrMatch(onProgress) {
         const uTurn = box.rel != null && Math.abs(box.rel) >= 150;
         const anyNode = finish || uTurn || box.rel == null || Math.abs(box.rel) <= 25 || !!box.lock;
         // a state off the network (off-piste) only goes on by compass, below
-        const ends = st.out == null && !finish && P >= 1 ? [] : P < 1 ? (st.out == null ? [] : [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }]) : st.out == null ? [] : rrWalks(st, lo, hi, mode, finish, missing, anyNode);
+        const ends = st.out == null && !finish && P >= 1 ? [] : P < 1 ? (st.out == null ? [] : [{ cur: st.v, acc: 0, pen: 0, path: [st.v], edges: [], junction: true, same: true }]) : st.out == null ? [] : rrWalks(st, lo, hi, mode, finish, missing, anyNode, full);
+        // the finish at the same distance as the box before ("Entrez dans le circuit… Arrivée"): the route may still be short of it
+        if (finish && box.lock && P < 1 && st.out != null) for (const w of rrWalks(st, 0, hi, mode, finish, missing, true, full)) ends.push(w);
         let bestShape = Infinity;
         const take = (w, wide) => {
           const dErr = (w.acc - P) / slack;
           let base = dErr * dErr + 1.2 * w.pen;
           // on pistes with a heading, a track that wanders off it or loops back is worth less than the compass
-          if (capPrev != null && P > 250 && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P);
+          const gpsLeg = !!(w.edges && w.edges.some(e => e.rec.p.gps));
+          // on pistes with a heading, a track that wanders off it or loops back is worth less than the compass
+          // (a public GPS trace more so: it may be a tourist's detour, not the rally's line)
+          if (capPrev != null && P > (gpsLeg ? 100 : 250) && !w.same) base += rrHeadingCost(graph.nodes[st.v], graph.nodes[w.cur], capPrev, P) * (gpsLeg ? (window.RR_OPTS || {}).gpsHead ?? 3 : 1);
           if (!w.junction) base += (box.rel != null && Math.abs(box.rel) > 25 && !uTurn) ? Infinity : 1.2;
+          if (gpsLeg) base += (window.RR_OPTS || {}).gpsCost ?? 0.8; // a public GPS trace: someone drove there, but maybe not the rally
           if (box.lock) { const R = box.lockR || 120, d = hav(box.lock, graph.nodes[w.cur]); if (d > R) return; base += (d / Math.max(35, R / 3)) ** 2; } // lockR: pin radius (m), e.g. a whole interchange
           if (!isFinite(base)) return;
           base += rrAvoidCost(st.av, graph.nodes[w.cur], box.km); // heading for the branch the roadbook says not to take
           const av = rrAvoidNext(st.av, box, graph.nodes[w.cur]);
           const histBase = { i, v: w.cur, ll: graph.nodes[w.cur], dErr: w.acc - P, skipped: false };
           const gd = st.gdist + w.acc;
-          const k = Math.max(0.85, Math.min(1.15, (gd + 3000) / (box.km * 1000 + 3000)));
-          const edges = w.same ? st.edges : st.edges.concat(w.edges);
+          const k = Math.max(RR_K_MIN, Math.min(RR_K_MAX, (gd + 3000) / (box.km * 1000 + 3000)));
+          { const kp = (window.RR_OPTS || {}).kPen ?? 0; if (kp && (box.surf === "road" || !(window.RR_OPTS || {}).kRoad)) base += kp * ((((gd + 3000) / (box.km * 1000 + 3000) - 1) / 0.03) ** 2 - (((st.k || 1) - 1) / 0.03) ** 2); }
+          const edges = w.same ? st.edges : rrEdgesAdd(st.edges, w.edges);
           if (finish) {
             const c = base;
             children.push({ v: w.cur, out: null, score: st.score + c, k, lastKm: box.km, anchorKm: box.km, gdist: gd, av, hist: st.hist.concat({ ...histBase, cost: c }), edges });
             return;
           }
-          const back = w.same ? (st.edges.length ? st.edges[st.edges.length - 1].fromNode : null) : w.path[w.path.length - 2];
+          const back = w.same ? (st.edges ? rrEdgesLast(st.edges).fromNode : null) : w.path[w.path.length - 2];
           const inB = w.same ? (back != null ? bearing(graph.nodes[back], graph.nodes[w.cur]) : null) : bearing(graph.nodes[rrBack(w.path, RR_LOOK)], graph.nodes[w.cur]);
           const exits = rrExits(w.cur, back, inB, mode, uTurn);
           // at a roundabout box, the exits are the roads leaving the ring, reached by driving round it
@@ -1055,17 +1138,17 @@ async function rrMatch(onProgress) {
             const c = base + rrScoreExit(box, ex, arms ? null : neighbours(w.cur).size) + shape + (box.ra && !ex.ring ? 0.8 : 0) + (wide ? 0.5 : 0);
             if (!isFinite(c)) continue;
             if (!wide) bestShape = Math.min(bestShape, shape + rrScoreExit(box, ex, null));
-            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, anchorKm: (rrIsJunctionBox(box) && w.junction) || box.lock ? box.km : anchorKm, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, shape, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? edges.concat(ex.ring) : edges });
+            children.push({ v: ex.ring ? ex.v : w.cur, out: ex.n, outEdge: ex.e, firstLen: ex.e.len, score: st.score + c, k, lastKm: box.km, anchorKm: (rrIsJunctionBox(box) && w.junction) || box.lock ? box.km : anchorKm, av, gdist: gd + (ex.ringLen || 0), hist: st.hist.concat({ ...histBase, cost: c, shape, angErr: box.rel != null && ex.rel != null ? relAngle(ex.rel, box.rel) : null }), edges: ex.ring ? rrEdgesAdd(edges, ex.ring) : edges });
           }
         };
         for (const w of ends) take(w, false);
         // like a rider who does not see the junction drawn: look a bit further either side for one that does look like it
         if (!finish && st.out != null && P >= 1 && rrIsJunctionBox(box) && bestShape > 1.5) {
           const lo2 = Math.max(0, P - 2 * slack), hi2 = P + 2 * slack;
-          for (const w of rrWalks(st, lo2, hi2, mode, finish, missing, anyNode)) if (w.acc < lo || w.acc > hi) take(w, true);
+          for (const w of rrWalks(st, lo2, hi2, mode, finish, missing, anyNode, full)) if (w.acc < lo || w.acc > hi) take(w, true);
         }
         // off-piste: follow the compass heading for the box distance where no mapped track fits (or from a point off the network)
-        for (const c of rrOffPisteKids(st, box, boxes[i - 1], P, mode, finish, uTurn, missing, { tol, ptol, pad, i })) children.push(c);
+        for (const c of rrOffPisteKids(st, box, boxes[i - 1], P, mode, finish, uTurn, missing, { tol, ptol, pad, i, boxes, np: nextPin[i] })) children.push(c);
         // skipping this box (misread, or a junction missing from IGN) is allowed at a price
         // (a pinned box is a hard constraint: skipping it costs so much that any state reaching the pin wins)
         const skipCost = box.lock ? 400 : 7;
@@ -1073,7 +1156,12 @@ async function rrMatch(onProgress) {
       }
       // load the missing data cells the walks ran into, then redo this box
       const need = [...missing].filter(([k]) => src.state(k) == null).slice(0, src.batch);
-      if (!need.length) break;
+      if (!need.length) {
+        if (!rrGpsWant.size) break;
+        const g = [...rrGpsWant].slice(0, 4);
+        onProgress(`Loading public GPS traces around box ${i + 1}… (${g.length} area${g.length > 1 ? 's' : ''})`);
+        await rrGpsLoad(g, mode); continue;
+      }
       onProgress(`Loading ${src.name} data around box ${i + 1}… (${need.length} area${need.length > 1 ? 's' : ''})`);
       await src.load(need);
     }
@@ -1092,15 +1180,22 @@ async function rrMatch(onProgress) {
     const best = new Map();
     for (const c of children) { const key = `${c.v}>${c.out}`; const o = best.get(key); if (!o || c.score < o.score) best.set(key, c); }
     beam = [...best.values()].sort((a, b) => a.score - b.score).slice(0, RR_BEAM);
+    if ((window.RR_OPTS || {}).dbg) (window.__dbg = window.__dbg || {})[i + 1] = { n: best.size, beam: beam.slice(0, 40).map(s => [graph.nodes[s.v].map(x => +x.toFixed(4)), +s.score.toFixed(2)]) };
     if (!beam.length) throw new Error(`Lost the route at box ${i + 1}.`);
     await new Promise(r => setTimeout(r, 0));
   }
   return beam[0];
 }
 // the graph edge objects don't know their start node: rebuild them with from/to for drawRoute()
+// A state's route so far is a chain of edge chunks shared with its parent state (null: no edge yet), not a
+// copied array: a beam of a few thousand states over a 400 km stage would otherwise copy tens of
+// thousands of edges per state and box, and run out of memory where the map is dense (a city).
+function rrEdgesAdd(l, arr) { return arr && arr.length ? { a: arr, p: l } : l; }
+function rrEdgesLast(l) { return l ? l.a[l.a.length - 1] : null; }
+function rrEdgesAll(l) { const parts = []; for (let x = l; x; x = x.p) parts.push(x.a); return parts.reverse().flat(); }
 function rrLegs(st) {
   const out = []; let prev = st.hist[0].v;
-  for (const e of st.edges) { out.push({ from: prev, to: e.to, len: e.len, rec: e.rec }); prev = e.to; }
+  for (const e of rrEdgesAll(st.edges)) { out.push({ from: prev, to: e.to, len: e.len, rec: e.rec }); prev = e.to; }
   return out;
 }
 function rrFixEdges() { // make walk edges carry their origin node so a zero-length box can find the way it arrived

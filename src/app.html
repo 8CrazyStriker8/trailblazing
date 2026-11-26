@@ -560,6 +560,8 @@ const ACC_CLASSES = ['path', 'cycle', 'small'];
 const MODE_LABEL = { walk: 'walkers', bike: 'bikes', vehicle: '4x4 / motorbikes' };
 const OSM_CELL = 0.02, ZONE_CELL = 0.05, OSM_TOL = 15; // metres between IGN and OSM geometry
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// a busy server can answer 200 with only part of the data and a remark ("runtime error: Query timed out…"): that is a failure, not an empty area
+const overpassJSON = async r => { const j = await r.json(); if (j && j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error('Overpass partial answer: ' + j.remark); return j; };
 const BAN_VALUES = ['no', 'private', 'agricultural', 'forestry', 'agricultural;forestry', 'forestry;agricultural', 'delivery', 'customers', 'permit', 'military', 'emergency', 'official', 'use_sidepath'];
 const WARN_VALUES = ['discouraged', 'destination'];
 const VALUE_FR = { no: 'forbidden', private: 'private', agricultural: 'farm vehicles only', forestry: 'forestry vehicles only', 'agricultural;forestry': 'farm & forestry only', 'forestry;agricultural': 'farm & forestry only', delivery: 'deliveries only', customers: 'customers only', permit: 'permit holders only', military: 'military only', emergency: 'emergency services only', official: 'official use only', use_sidepath: 'use the side path', discouraged: 'discouraged', destination: 'local access only', permissive: 'tolerated by the owner (can be withdrawn)', yes: 'allowed', designated: 'designated' };
@@ -594,7 +596,7 @@ function overpassCell(i, j) {
         try {
           const r = await fetchT(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 45000);
           if (!r.ok) throw new Error('Overpass HTTP ' + r.status);
-          const j = await r.json();
+          const j = await overpassJSON(r);
           const ways = [], barriers = [];
           for (const el of j.elements || []) {
             if (el.type === 'way' && el.geometry) {
