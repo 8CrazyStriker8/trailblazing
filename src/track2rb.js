@@ -272,8 +272,105 @@ function t2rOffRuns(T, idx) {
   return out;
 }
 
+// ---------- landmarks: info boxes from OpenStreetMap (fuel, police, toll, villages, oueds, level crossings…) ----------
+const t2rName = t => { const n = (t['name:fr'] || t.name || '').split(/\s+(?=[؀-ۿⴰ-⵿])/)[0].trim(); return n && !/[؀-ۿⴰ-⵿]/.test(n) ? n : ''; };
+const T2R_LM = [ // [test(tags), group, symbol, label(tags), metres from the track]
+  [t => t.amenity === 'fuel', 'fuel', 'fuel', t => ['Fuel', t2rName({ name: t.brand }) || t2rName(t)].filter(Boolean).join(' '), 60],
+  [t => t.amenity === 'police' || t.barrier === 'checkpoint', 'police', 'police', () => 'Police', 60],
+  [t => t.barrier === 'toll_booth' || t.highway === 'toll_gantry', 'toll', 'toll', () => 'Toll', 40],
+  [t => /^(level_crossing|crossing)$/.test(t.railway || ''), 'rail', 'level_crossing', () => 'Level crossing', 15],
+  [t => t.ford && t.ford !== 'no', 'oued', 'ford', () => 'Ford / oued crossing', 20],
+  [t => /^(bump|hump|table|yes|cushion)$/.test(t.traffic_calming || ''), 'bump', 'speed_bump', () => 'Speed bump', 12],
+  [t => t.highway === 'speed_camera', 'camera', 'speed_camera', () => 'Speed camera', 30],
+  [t => t.highway === 'mini_roundabout', 'mini', 'mini_roundabout', () => 'Mini-roundabout', 20],
+  [t => t.place === 'city', 'place', 'village', t => t2rName(t), 2500],
+  [t => t.place === 'town', 'place', 'village', t => t2rName(t), 1200],
+  [t => t.place === 'village', 'place', 'village', t => t2rName(t), 500],
+  [t => t.historic === 'ruins' && t2rName(t), 'ruins', 'ruins', t => ['Ruins', t2rName(t)].filter(Boolean).join(' '), 150],
+  [t => /^(castle|fort)$/.test(t.historic || '') && t2rName(t), 'ruins', 'fort', t => ['Kasbah / fort', t2rName(t)].filter(Boolean).join(' '), 200],
+];
+const T2R_LM_Q = L => `[out:json][timeout:180];(` +
+  `nwr["amenity"~"^(fuel|police)$"](around:150,${L});node["barrier"~"^(toll_booth|checkpoint)$"](around:60,${L});` +
+  `node["railway"~"^(level_crossing|crossing)$"](around:25,${L});node["ford"](around:25,${L});node["traffic_calming"](around:20,${L});` +
+  `node["highway"~"^(mini_roundabout|speed_camera|toll_gantry)$"](around:40,${L});node["place"~"^(city|town|village)$"](around:3000,${L});` +
+  `nwr["historic"~"^(ruins|castle|fort)$"](around:200,${L});` +
+  `);out center;way["waterway"~"^(river|stream|wadi)$"](around:10,${L});out tags geom;`;
+// track samples every 10 m in a grid: nearest point of the track to p within R metres -> { d, off }
+function t2rTrackGrid(T) {
+  const S = 0.005, g = new Map(), key = (i, j) => i + '_' + j;
+  for (let d = 0; d <= T.total; d += 10) { const p = T.at(d), k = key(Math.floor(p[0] / S), Math.floor(p[1] / S)); let a = g.get(k); if (!a) g.set(k, a = []); a.push(d); }
+  return (p, R) => {
+    const dy = Math.ceil(R / 111320 / S), dx = Math.ceil(R / (111320 * Math.cos(p[0] * Math.PI / 180)) / S), i0 = Math.floor(p[0] / S), j0 = Math.floor(p[1] / S);
+    let best = null;
+    for (let i = i0 - dy; i <= i0 + dy; i++) for (let j = j0 - dx; j <= j0 + dx; j++) for (const d of g.get(key(i, j)) || []) { const o = hav(p, T.at(d)); if (o <= R && (!best || o < best.off)) best = { d, off: o }; }
+    return best;
+  };
+}
+const t2rCross = (a, b, c, e) => { const s = (p, q, r) => (r[1] - p[1]) * (q[0] - p[0]) - (q[1] - p[1]) * (r[0] - p[0]); return (s(c, e, a) > 0) !== (s(c, e, b) > 0) && (s(a, b, c) > 0) !== (s(a, b, e) > 0); };
+// landmarks along the track: [{ d, group, sym, label }]
+async function t2rLandmarks(T, say) {
+  const simp = t2rSimplify(T.pts, 12), chunks = [], els = [];
+  for (let i = 0; i < simp.length - 1; i += 350) chunks.push(simp.slice(i, i + 351));
+  for (let k = 0; k < chunks.length; k++) {
+    say(`Loading landmarks along the track (${k + 1} / ${chunks.length})…`);
+    try { const j = await rrOverpass(T2R_LM_Q(chunks[k].map(p => `${p[0].toFixed(5)},${p[1].toFixed(5)}`).join(',')), 200000); els.push(...(j.elements || [])); } catch (e) { /* no landmarks there */ }
+  }
+  const near = t2rTrackGrid(T), out = [], seen = new Set();
+  for (const el of els) {
+    const key = el.type + el.id; if (seen.has(key)) continue; seen.add(key);
+    const t = el.tags || {};
+    if (t.waterway && el.geometry) { // where the track crosses a named oued (unnamed streams are everywhere)
+      if (!t2rName(t)) continue;
+      const g = el.geometry.map(q => [q.lat, q.lon]);
+      for (let i = 1; i < g.length; i++) {
+        const h = near(g[i], 400); if (!h) continue;
+        for (let d = Math.max(0, h.d - 400); d < Math.min(T.total, h.d + 400); d += 10)
+          if (t2rCross(T.at(d), T.at(d + 10), g[i - 1], g[i])) out.push({ d: d + 5, group: 'oued', sym: 'oued', label: /^oued\b/i.test(t2rName(t)) ? t2rName(t) : 'Oued ' + t2rName(t) });
+      }
+      continue;
+    }
+    const ll = el.lat != null ? [el.lat, el.lon] : el.center ? [el.center.lat, el.center.lon] : null; if (!ll) continue;
+    const rule = T2R_LM.find(r => r[0](t)); if (!rule) continue;
+    if (rule[1] === 'place' && !t2rName(t)) continue;
+    const h = near(ll, rule[4]); if (!h) continue;
+    if (rule[1] === 'place') { // the stretch of track within the place's radius: entering and leaving it
+      let d0 = h.d, d1 = h.d;
+      while (d0 > 0 && hav(T.at(d0 - 20), ll) <= rule[4]) d0 -= 20;
+      while (d1 < T.total && hav(T.at(d1 + 20), ll) <= rule[4]) d1 += 20;
+      const nm = rule[3](t);
+      if (d1 - d0 < 700) { if (t.place !== 'village') out.push({ d: h.d, group: 'place', sym: 'village', label: `Through ${nm}`, place: nm }); } // a village only skirted: no box
+      else { out.push({ d: d0, group: 'place', sym: 'village', label: `Entering ${nm}`, place: nm }); out.push({ d: d1, group: 'place-end', sym: 'village', label: `Leaving ${nm}`, place: nm }); }
+      continue;
+    }
+    out.push({ d: h.d, group: rule[1], sym: rule[2], label: rule[3](t) });
+  }
+  // one box per landmark of a kind within 300 m (a row of speed bumps, an oued and its ford); names win
+  out.sort((a, b) => a.d - b.d);
+  const kept = [];
+  for (const x of out) { const l = kept.find(y => y.group === x.group && (x.place ? y.place === x.place && Math.abs(y.d - x.d) < 5000 : Math.abs(y.d - x.d) < (x.group === 'fuel' ? 1000 : 300)));
+    if (l && x.group === 'fuel') { l.n = (l.n || 1) + 1; l.label = `Fuel (${l.n} stations)`; continue; } if (!l) kept.push(x); else if (x.label.length > l.label.length) Object.assign(l, { label: x.label, sym: x.sym }); }
+  return kept;
+}
+// a winding road: over any 1 km of mapped road the heading turns by 330° or more in all; one box at the start with its length
+function t2rWinding(T, runs) {
+  const step = 25, turn = [];
+  for (let d = step; d < T.total - step; d += step) { const a = T.brg(d - step, d), b = T.brg(d, d + step); turn.push([d, a == null || b == null ? 0 : Math.abs(relAngle(b, a))]); }
+  const W = 1000 / step, secs = [];
+  let sum = 0;
+  for (let k = 0; k < turn.length; k++) {
+    sum += turn[k][1]; if (k >= W) sum -= turn[k - W][1];
+    if (k >= W - 1 && sum >= 330) {
+      const d0 = turn[k - W + 1][0], d1 = turn[k][0];
+      if (runs.some(r => d1 > r.d0 && d0 < r.d1)) continue;
+      const l = secs[secs.length - 1];
+      if (l && d0 - l.d1 < 1500) l.d1 = d1; else secs.push({ d0, d1 });
+    }
+  }
+  return secs.filter(x => x.d1 - x.d0 >= 2000).map(x => ({ d: x.d0, group: 'winding', sym: 'sign_winding', label: `Winding road for ${((x.d1 - x.d0) / 1000).toFixed(1)} km` }));
+}
+
 // raw boxes -> roadbook boxes (same shape as the planner's boxes), with notes and symbols
-function t2rFinish(T, raw) {
+function t2rFinish(T, raw, marks = []) {
   raw.sort((a, b) => a.d - b.d);
   // two boxes a few metres apart (dual carriageway, staggered junction): keep one, the second's exit wins
   const merged = [];
@@ -290,9 +387,16 @@ function t2rFinish(T, raw) {
     const b = merged[k];
     if (b.kind === 'junction' && !b.ra && !b.off && Math.abs(b.rel || 0) < 60 && rings.some(r => Math.abs(r.d - b.d) < 80)) merged.splice(k, 1);
   }
+  // landmarks: on the box they are next to (60 m), or a box of their own
+  for (const m of marks) {
+    const host = merged.reduce((best, b) => (Math.abs(b.d - m.d) < 60 && (!best || Math.abs(b.d - m.d) < Math.abs(best.d - m.d)) ? b : best), null);
+    if (host) { (host.marks = host.marks || []).push(m); continue; }
+    merged.push({ kind: 'junction', d: m.d, info: true, marks: [m], rel: 0, inRec: m.rec, outRec: m.rec, inSurf: m.rec ? null : 'path', outSurf: m.rec ? null : 'path' });
+  }
+  merged.sort((a, b) => a.d - b.d);
   return merged.map((b, k) => {
     const { inB, outB } = t2rInOut(T, b.d, 60);
-    const rel = b.rel != null ? b.rel : inB != null && outB != null ? relAngle(outB, inB) : 0;
+    const rel = b.info ? 0 : b.rel != null ? b.rel : inB != null && outB != null ? relAngle(outB, inB) : 0;
     const cap = b.kind === 'finish' || outB == null ? null : Math.round(outB) % 360;
     const surf = r => (r ? surfaceOf(r) : null);
     const inSurf = b.inSurf || surf(b.inRec) || 'track', outSurf = b.outSurf || surf(b.outRec) || 'track';
@@ -303,8 +407,10 @@ function t2rFinish(T, raw) {
     else if (b.off === 'leave') { notes.push(`Off-piste, CAP ${String(cap).padStart(3, '0')}`); if (Math.abs(rel) >= 20) notes.push(turnWord(rel)); sym.push('offtrack'); }
     else if (b.off === 'join') { notes.push(`${turnWord(rel)}, join the ${outSurf}`); sym.push('offtrack_end'); }
     else if (b.off === 'cap') notes.push(`Keep CAP ${String(cap).padStart(3, '0')}`);
+    else if (b.info) { /* landmark only: its label below */ }
     else { notes.push(turnWord(rel)); if (b.exitLink) notes.push('take the exit'); }
-    if (b.outRec && b.kind !== 'finish' && !b.off) {
+    for (const m of b.marks || []) { if (b.info && m === b.marks[0]) notes.unshift(m.label); else notes.push(m.label); sym.push(m.sym); }
+    if (b.outRec && b.kind !== 'finish' && !b.off && !b.info) {
       if (b.kind === 'start' || !b.inRec || surf(b.inRec) !== surf(b.outRec)) notes.push(`on ${outSurf}`);
       const nm = roadName(b.outRec); if (nm && (b.kind === 'start' || !b.inRec || roadName(b.inRec) !== nm)) notes.push(nm);
     }
@@ -361,7 +467,13 @@ async function trackToRoadbook(track, opts = {}) {
     const ds = raw.filter(b => b.d >= r.d0 && b.d <= r.d1).map(b => b.d).concat([r.d0, r.d1]).sort((a, b) => a - b);
     for (let k = 1; k < ds.length; k++) for (let d = ds[k - 1] + T2R.CAP_EVERY; d < ds[k] - 1000; d += T2R.CAP_EVERY) raw.push({ kind: 'junction', d, off: 'cap', inSurf: surf, outSurf: surf });
   }
-  const boxes = t2rFinish(T, raw);
+  let marks = [];
+  if (opts.network !== false && opts.landmarks !== false) {
+    marks = await t2rLandmarks(T, say);
+    marks.push(...t2rWinding(T, opts.network === false ? [] : t2rOffRuns(T, idx)));
+    for (const m of marks) m.rec = recAt(m.d);
+  }
+  const boxes = t2rFinish(T, raw, marks);
   return { boxes, total: T.total, coords: T.pts, src, complete: opts.network === false ? null : complete, junctions: passes.length };
 }
 
