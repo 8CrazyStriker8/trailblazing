@@ -166,6 +166,7 @@
   <div id="rbOdo" class="muted" style="cursor:pointer"></div>
   <div id="rbList"></div>
   <div class="row"><button id="rbFromRoute">From route</button><button id="rbFromTrack" title="Build roadbook boxes (junctions, roundabouts, off-piste, tulips) from the track of the GPX you opened">From track</button><label class="filebtn"><span>Open file…</span><input type="file" id="rbOpenFile" accept=".gpx,.xml,application/gpx+xml,application/xml,text/xml" hidden></label><button id="rbNew">New</button></div>
+  <label class="muted" title="From track: on roads, no box for straight on past side roads, villages only where you enter them (one every 5 km at most), one fuel box every 10 km, no speed bumps or cameras. Pistes and off-piste are not changed." style="padding:2px 4px"><input type="checkbox" id="rbFewer"> Fewer boxes on roads (From track)</label>
   <div class="row"><button id="rbPdf">⬇ PDF</button><button id="rbOr">⬇ OpenRally</button><button id="rbGpx" title="Save the roadbook's track and boxes as a plain GPX">⬇ GPX</button></div>
 </div>
 <div id="rbEdit" class="panel"></div>
@@ -1593,6 +1594,7 @@ document.getElementById('rbFromRoute').onclick = () => {
   const built = buildRoadbook(lastLegs, profileMode()); if (!built) return;
   RB = { name: 'TrailBlazing roadbook', boxes: rbFromBuild(built), track: built.coords, odo: built.total }; rbRender();
 };
+{ const f = document.getElementById('rbFewer'); f.checked = loadJSON('tb.rbFewer') === true; f.onchange = () => saveJSON('tb.rbFewer', f.checked); }
 document.getElementById('rbFromTrack').onclick = () => {
   if (!RB.track || RB.track.length < 2) return alert('Open a GPX file with a track first (Open file…), then tap From track.');
   if (RB.boxes.length && !confirm('Replace the current boxes with ones built from the track?')) return;

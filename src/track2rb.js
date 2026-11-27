@@ -195,7 +195,7 @@ function t2rGroupRings(passes) {
 }
 
 // box from a junction pass (or a roundabout group); null when it is not worth a box
-function t2rJunctionBox(T, p, use) {
+function t2rJunctionBox(T, p, use, fewer = false) {
   const box = { kind: 'junction' };
   if (p.ring) {
     const g = p.ring, d0 = g[0].d, d1 = g[g.length - 1].d;
@@ -246,7 +246,8 @@ function t2rJunctionBox(T, p, use) {
     others = others.filter(a => !isLink(a));
     const fork = others.some(a => Math.abs(relAngle(a.b, p.outArm.b)) < 35 && !(onRoad && t2rMinor(a.e.rec)) && t2rImp(a.e.rec) <= imp);
     // a crossing worth a box: a bigger road; one as big on a main road; any track off a track (desert forks)
-    const worth = a => !(onRoad && t2rMinor(a.e.rec)) && (t2rImp(a.e.rec) < imp || (t2rImp(a.e.rec) === imp && (imp <= 4 || !onRoad)));
+    // fewer boxes: on a road, only a bigger road crossing (or a fork) is worth a straight-on box
+    const worth = a => !(onRoad && t2rMinor(a.e.rec)) && (fewer && onRoad ? t2rImp(a.e.rec) < imp && t2rImp(a.e.rec) <= 3 : t2rImp(a.e.rec) < imp || (t2rImp(a.e.rec) === imp && (imp <= 4 || !onRoad)));
     if (!fork && !others.some(worth)) return null;
   }
   return Object.assign(box, { rel, branches: p.others.map(a => ({ rel: relAngle(a.b, p.ref), surface: surfaceOf(a.e.rec) })), ref: p.ref });
@@ -325,7 +326,7 @@ async function t2rLandmarks(T, say) {
       for (let i = 1; i < g.length; i++) {
         const h = near(g[i], 400); if (!h) continue;
         for (let d = Math.max(0, h.d - 400); d < Math.min(T.total, h.d + 400); d += 10)
-          if (t2rCross(T.at(d), T.at(d + 10), g[i - 1], g[i])) out.push({ d: d + 5, group: 'oued', sym: 'oued', label: /^oued\b/i.test(t2rName(t)) ? t2rName(t) : 'Oued ' + t2rName(t) });
+          if (t2rCross(T.at(d), T.at(d + 10), g[i - 1], g[i])) out.push({ d: d + 5, group: 'oued', sym: 'oued', oued: t2rName(t), label: /^oued\b/i.test(t2rName(t)) ? t2rName(t) : 'Oued ' + t2rName(t) });
       }
       continue;
     }
@@ -338,8 +339,8 @@ async function t2rLandmarks(T, say) {
       while (d0 > 0 && hav(T.at(d0 - 20), ll) <= rule[4]) d0 -= 20;
       while (d1 < T.total && hav(T.at(d1 + 20), ll) <= rule[4]) d1 += 20;
       const nm = rule[3](t);
-      if (d1 - d0 < 700) { if (t.place !== 'village') out.push({ d: h.d, group: 'place', sym: 'village', label: `Through ${nm}`, place: nm }); } // a village only skirted: no box
-      else { out.push({ d: d0, group: 'place', sym: 'village', label: `Entering ${nm}`, place: nm }); out.push({ d: d1, group: 'place-end', sym: 'village', label: `Leaving ${nm}`, place: nm }); }
+      if (d1 - d0 < 700) { if (t.place !== 'village') out.push({ d: h.d, group: 'place', sym: 'village', label: `Through ${nm}`, place: nm, pt: t.place }); } // a village only skirted: no box
+      else { out.push({ d: d0, group: 'place', sym: 'village', label: `Entering ${nm}`, place: nm, pt: t.place }); out.push({ d: d1, group: 'place-end', sym: 'village', label: `Leaving ${nm}`, place: nm, pt: t.place }); }
       continue;
     }
     out.push({ d: h.d, group: rule[1], sym: rule[2], label: rule[3](t) });
@@ -347,9 +348,22 @@ async function t2rLandmarks(T, say) {
   // one box per landmark of a kind within 300 m (a row of speed bumps, an oued and its ford); names win
   out.sort((a, b) => a.d - b.d);
   const kept = [];
-  for (const x of out) { const l = kept.find(y => y.group === x.group && (x.place ? y.place === x.place && Math.abs(y.d - x.d) < 5000 : Math.abs(y.d - x.d) < (x.group === 'fuel' ? 1000 : 300)));
+  for (const x of out) { const l = kept.find(y => y.group === x.group && (x.place ? y.place === x.place && Math.abs(y.d - x.d) < 5000 : x.oued && y.oued === x.oued && Math.abs(y.d - x.d) < 5000 ? true : Math.abs(y.d - x.d) < (x.group === 'fuel' ? 1000 : 300)));
     if (l && x.group === 'fuel') { l.n = (l.n || 1) + 1; l.label = `Fuel (${l.n} stations)`; continue; } if (!l) kept.push(x); else if (x.label.length > l.label.length) Object.assign(l, { label: x.label, sym: x.sym }); }
   return kept;
+}
+// fewer boxes on roads: no speed bumps or cameras, villages only where you enter them and at most one every 5 km, one fuel box every 10 km
+function t2rFewerMarks(marks) {
+  let lastFuel = -Infinity, lastVillage = -Infinity;
+  return marks.filter(m => {
+    const road = m.rec && surfaceOf(m.rec) === 'road';
+    if (!road) return true;
+    if (m.group === 'bump' || m.group === 'camera') return false;
+    if (m.pt === 'village' && m.group === 'place-end') return false;
+    if (m.pt === 'village') { if (m.d - lastVillage < 5000) return false; lastVillage = m.d; }
+    if (m.group === 'fuel') { if (m.d - lastFuel < 10000) return false; lastFuel = m.d; }
+    return true;
+  });
 }
 // a winding road: over any 1 km of mapped road the heading turns by 330° or more in all; one box at the start with its length
 function t2rWinding(T, runs) {
@@ -370,7 +384,7 @@ function t2rWinding(T, runs) {
 }
 
 // raw boxes -> roadbook boxes (same shape as the planner's boxes), with notes and symbols
-function t2rFinish(T, raw, marks = []) {
+function t2rFinish(T, raw, marks = [], fewer = false) {
   raw.sort((a, b) => a.d - b.d);
   // two boxes a few metres apart (dual carriageway, staggered junction): keep one, the second's exit wins
   const merged = [];
@@ -386,6 +400,11 @@ function t2rFinish(T, raw, marks = []) {
   for (let k = merged.length - 1; k >= 0; k--) {
     const b = merged[k];
     if (b.kind === 'junction' && !b.ra && !b.off && Math.abs(b.rel || 0) < 60 && rings.some(r => Math.abs(r.d - b.d) < 80)) merged.splice(k, 1);
+  }
+  // fewer boxes: a straight-on box on a road less than 400 m after the previous box is dropped (town centres)
+  if (fewer) for (let k = merged.length - 1; k > 0; k--) {
+    const b = merged[k];
+    if (b.kind === 'junction' && !b.ra && !b.off && !b.exitLink && Math.abs(b.rel || 0) < 20 && b.outRec && surfaceOf(b.outRec) === 'road' && b.d - merged[k - 1].d < 400) merged.splice(k, 1);
   }
   // landmarks: on the box they are next to (60 m), or a box of their own
   for (const m of marks) {
@@ -437,7 +456,7 @@ async function trackToRoadbook(track, opts = {}) {
   // where the track is on the network: one box per junction where it turns or a comparable way branches off
   const passes = opts.network === false ? [] : t2rGroupRings(t2rJunctions(T, idx, use));
   for (const p of passes) {
-    const b = t2rJunctionBox(T, p, use); if (!b) continue;
+    const b = t2rJunctionBox(T, p, use, !!opts.fewer); if (!b) continue;
     b.outB = p.ring ? null : p.outArm.b;
     raw.push(b);
   }
@@ -472,8 +491,9 @@ async function trackToRoadbook(track, opts = {}) {
     marks = await t2rLandmarks(T, say);
     marks.push(...t2rWinding(T, opts.network === false ? [] : t2rOffRuns(T, idx)));
     for (const m of marks) m.rec = recAt(m.d);
+    if (opts.fewer) marks = t2rFewerMarks(marks);
   }
-  const boxes = t2rFinish(T, raw, marks);
+  const boxes = t2rFinish(T, raw, marks, !!opts.fewer);
   return { boxes, total: T.total, coords: T.pts, src, complete: opts.network === false ? null : complete, junctions: passes.length };
 }
 
@@ -484,7 +504,8 @@ async function rbFromTrack(track, name) {
   const btn = document.getElementById('rbFromTrack'), sum = document.getElementById('rbSum');
   if (btn) btn.disabled = true;
   try {
-    const r = await trackToRoadbook(track, { onProgress: t => { sum.textContent = t; } });
+    const fewer = !!(document.getElementById('rbFewer') || {}).checked;
+    const r = await trackToRoadbook(track, { fewer, onProgress: t => { sum.textContent = t; } });
     RB = { name: name || RB.name || 'TrailBlazing roadbook', boxes: r.boxes, track: r.coords, odo: r.total };
     rbRender();
     if (r.complete === false) alert(`Built ${r.boxes.length} boxes, but some of the road network along the track could not be loaded (server busy or offline): there the boxes come from the shape of the track only. Try again later for proper junction tulips.`);
